@@ -1,2 +1,2 @@
 # git-sample-yama
-Abranchの変更
+Bbranchの変更
