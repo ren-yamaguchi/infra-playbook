@@ -1,2 +1,2 @@
-# Manual
-構築手順書の管理
+# Study Log
+学習記録
