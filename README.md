@@ -1,2 +1,2 @@
-# Study Log
+# Learning Records
 学習記録
