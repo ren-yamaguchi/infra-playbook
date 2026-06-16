@@ -9,18 +9,17 @@
 | 手順書名 | Docker WordPress 環境構築手順書(Apache / PHP / MariaDB) |
 | 作成日 | 2026-06-16 |
 | 最終更新日 | 2026-06-16 |
-| 作成者 | RYama |
 | バージョン | v1.3 |
 | 対象環境 | AWS(EC2 / Amazon Linux 2023) |
 
 > **改訂履歴**
 >
-> | バージョン | 日付 | 変更内容 | 変更者 |
-> |-----------|------|---------|--------|
-> | v1.0 | 2026-06-16 | 初版作成 | RYama |
-> | v1.1 | 2026-06-16 | ポートを 80 に変更、コンテナ名を wordpress-web / wordpress-db に変更、sudo 方針を整理 | RYama |
-> | v1.2 | 2026-06-16 | Dockerfile のファイル名を `amzn2.Dockerfile` → `Dockerfile` に変更 | RYama |
-> | v1.3 | 2026-06-16 | Step 7「WordPress 初期セットアップ」を追加 | RYama |
+> | バージョン | 日付 | 変更内容 |
+> |-----------|------|---------|
+> | v1.0 | 2026-06-16 | 初版作成 |
+> | v1.1 | 2026-06-16 | ポートを 80 に変更、コンテナ名を wordpress-web / wordpress-db に変更、sudo 方針を整理 |
+> | v1.2 | 2026-06-16 | Dockerfile のファイル名を `amzn2.Dockerfile` → `Dockerfile` に変更 |
+> | v1.3 | 2026-06-16 | Step 7「WordPress 初期セットアップ」を追加 |
 
 ------------------------------
 
