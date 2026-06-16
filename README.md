@@ -1,104 +1,106 @@
 # infra-playbook
 
-クラウド/インフラ領域の学習記録・構築手順・ナレッジを集約したリポジトリです。  
+クラウド/インフラ領域の学習記録・構築手順・ナレッジを集約したリポジトリです。
 ハンズオンで手を動かした内容を、再現可能な形で残すことを目的としています。
 
 ---
 
 ## このリポジトリについて
 
-研修課題や自己学習で取り組んだ内容を、章立てで順に積み上げています。  
-**現状の構築記録は AWS を前提**としており、EC2/VPC/ALB/Route53 等を基盤に各ミドルウェア・多段構成・冗長化を検証しています。今後、Azure・GCP など他クラウドでの構築記録も並行して追加していく予定です。
+研修課題や自己学習で取り組んだ内容を、**成果物単位(`projects/`)** と **技術カテゴリ単位(`topics/`)** の2つの軸で整理しています。
+現状の構築記録は AWS を前提としており、EC2 / VPC / ALB / Route53 等を基盤に各ミドルウェア・多段構成・冗長化を検証しています。今後、Azure・GCP など他クラウドでの構築記録も並行して追加していく予定です。
 
-単なる作業ログではなく、**「半年後の自分が読んで再現できる」**ことを基準に、以下を意識して記録しています。
+単なる作業ログではなく、**「半年後の自分が読んで再現できる」** ことを基準に、以下を意識して記録しています。
 
-- 構築手順は**冪等性・ロールバック手順・完了基準**まで含めて記述
-- 詰まったポイントと原因・対処を**トラブルシュート**として明示
+- 構築手順は **冪等性・ロールバック手順・完了基準** まで含めて記述
+- 詰まったポイントと原因・対処を **トラブルシュート** として明示
 - 公式ドキュメントへのリンクと、自分の言葉での要約をセットで残す
+
+---
+
+## スキルマップ
+
+| カテゴリ | 技術 |
+|---------|------|
+| クラウド | AWS (EC2, VPC, ALB, Route53, EBS, Security Group) |
+| OS | Amazon Linux 2023, Ubuntu, RHEL 系 |
+| Web / AP | Apache, Nginx, Tomcat, PHP-FPM |
+| DB | MariaDB, PostgreSQL (JDBC / JNDI 設定含む) |
+| ネットワーク | BIND, NSD (Primary / Secondary Zone) |
+| ストレージ | NFS |
+| メール | Postfix, Dovecot |
+| 監視 | Zabbix 7.0 |
+| IaC / 自動化 | Ansible (Playbook / Role / Inventory), Docker / Docker Compose |
+| Linux | 権限設計 (SUID / SGID / Sticky), systemd, シェルスクリプト, cron |
+| 学習中 | AWS IAM, Terraform, Linux ネットワーク (L2 / L3 シミュレーション) |
+
+詳細は [`docs/skills.md`](docs/skills.md) を参照。
+
+---
+
+## ハンズオン実績(ハイライト)
+
+複数の技術を組み合わせて構築した代表的なプロジェクトです。
+
+### AWS 多段 LAMP / WordPress 構成
+→ [`projects/lamp-3tier-wordpress/`](projects/lamp-3tier-wordpress/)
+
+Apache / PHP-FPM / MariaDB / BIND DNS による多段構成。セキュリティグループを `/32` 単位で最小権限設計し、`mod_proxy_fcgi` 経由で Apache ↔ PHP-FPM を連携。WordPress ファイルは rsync で同期。
+
+### Knowledge アプリ マルチサーバ展開
+→ [`projects/knowledge-app/`](projects/knowledge-app/)
+
+Nginx + Tomcat + PostgreSQL + NFS の構成で社内ナレッジアプリを展開。JNDI 設定、NFS の `root_squash` による削除エラー、JDBC ドライバの `scram-sha-256` 非対応など、複数の層にまたがる問題を切り分けて解決。
+
+### チーム最終演習(リーダー役)
+→ [`projects/team-final-exercise/`](projects/team-final-exercise/)
+
+Web / AP / DB / DNS / SMTP の環境構築をチームで実施。技術リーダーとしてメンバーの詰まりを解消しつつ、期限内の完成に向けて全員の方向性を揃える役割を担当。
+
+### Zabbix 7.0 監視基盤
+→ [`projects/zabbix-monitoring/`](projects/zabbix-monitoring/)
+
+Amazon Linux 2023 上に Zabbix 7.0 を構築。リポジトリ競合(SPAL)の解決、スキーマインポートエラーや OOM 対策まで対応。
 
 ---
 
 ## ディレクトリ構成
 
-番号プレフィックスは学習・構築の順序を表しています。  
-基本的な単一サーバ構築から、多段構成・冗長化・自動化へと段階的に積み上げる構成です。
-
 ```
 .
-├── 00_EBSボリューム拡張       # EC2 ストレージ拡張の基本操作
-├── 01_VPC                   # ネットワーク基盤(サブネット/ルートテーブル/IGW)
-├── 02_WEB                   # Apache 単体構築
-├── 03_AP                    # アプリ層(Tomcat / PHP-FPM 両方を扱う)
-├── 04_WEB三層構造            # Web / AP / DB 3層構成
-├── 05_DNS                   # BIND / NSD によるゾーン構築
-├── 06_Mail                  # Postfix / Dovecot
-├── 07_NFS                   # NFS によるファイル共有
-├── 08_Zabbix                # Zabbix 7.0 監視基盤(SNMP/OpenIPMI)
-├── 09_ALB                   # ALB によるロードバランシング・冗長化
-├── 10_Ansible               # 構成管理の自動化(Playbook/Role/Inventory)
-├── 11_Docker                # コンテナ・Docker Compose
-├── 20_発展                  # 各領域の発展課題・応用検証
-├── 30_Azure                 # Azure 上での構築記録(今後追加)
-└── 40_GCP                   # GCP 上での構築記録(今後追加)
+├── projects/        # 成果物単位(複数技術を組み合わせた構築記録)
+├── topics/          # 技術カテゴリ単位(単元別の手順・ナレッジ)
+├── multi-cloud/     # AWS 以外のクラウドでの構築記録(今後追加)
+└── docs/            # 年表・スキルマップ・調査メモなどメタ情報
 ```
 
-各ディレクトリには個別の `README.md` を配置し、**学習目的・前提・構築手順・完了基準・参考資料**を記載しています。
+各ディレクトリには `README.md` を配置し、そのディレクトリの目的・前提・参照順序などを記載しています。
 
 ---
 
-## 前提とするクラウド環境
+## 学習の時系列
 
-本リポジトリの構築記録は、特記がない限り **AWS** を前提としています。
+学んだ順序・各時期の取り組みは [`docs/timeline.md`](docs/timeline.md) にまとめています。
 
-| 区分 | 内容 |
-|------|------|
-| メイン | AWS(EC2 / VPC / ALB / Route53 / EBS など) |
-| 追加予定 | Azure(`30_Azure/`)、GCP(`40_GCP/`) |
-| ローカル検証 | VirtualBox + Ubuntu、Docker / Docker Compose |
+ざっくりした流れ:
 
-他クラウドでの構築は、AWS で学んだ概念(VPC・サブネット・ロードバランサ・IAM 等)が各社サービスにどう対応するかを意識しながら進める予定です。
-
----
-
-## 学習トピック
-
-### クラウド / インフラ基盤(AWS)
-- AWS マルチサーバ構成(Web / AP / DB / NFS / DNS / SMTP の各ティア)
-- VPC 設計(サブネット・ルートテーブル・セキュリティグループ)
-- セキュリティグループの最小権限設計(CIDR/32 単位)
-- ALB によるロードバランシング・冗長化
-
-### ミドルウェア
-- Apache / Nginx(リバースプロキシ・ロードバランサ)
-- Tomcat(Java アプリ実行基盤、Knowledge アプリ構築)
-- PHP-FPM(FastCGI 経由での Apache 連携)
-- PostgreSQL / MariaDB(JDBC/JNDI 設定含む)
-- BIND / NSD(プライマリ・セカンダリゾーン構成)
-- Postfix / Dovecot(SMTP/IMAP)
-- NFS(`root_squash` の挙動検証含む)
-
-### 監視
-- Zabbix 7.0 on AL2023(SNMP / OpenIPMI 対応)
-- リポジトリ競合・OOM・スキーマインポートエラーの解決
-
-### IaC / 自動化
-- Ansible(Control Node / Managed Node / Inventory / Playbook / Role / 冪等性)
-- Docker / Docker Compose(WordPress マルチコンテナ構成 等)
+1. **Linux 基礎・AWS 基礎** (VPC / EC2 / EBS)
+2. **単体ミドルウェア** (Apache → Tomcat → PHP-FPM → MariaDB → PostgreSQL)
+3. **多段構成** (Web / AP / DB 3 層 → 4 層 + DNS)
+4. **付帯サービス** (BIND / NSD, Postfix / Dovecot, NFS)
+5. **冗長化・監視** (ALB, Zabbix)
+6. **自動化** (Ansible, Docker / Compose)
+7. **発展領域**(Terraform, Linux ネットワーク、他クラウド)
 
 ---
 
 ## 今後追加予定
 
-学習ロードマップとして、以下を順次追加予定です。
-
 | 領域 | 内容 |
 |------|------|
 | 他クラウド | Azure / GCP での基本構成・AWS との対応関係 |
-| ネットワーク | L2 スイッチシミュレーション(Docker + Linux Bridge)、L3 スイッチ、ファイアウォール |
+| ネットワーク | L2 スイッチシミュレーション(Docker + Linux Bridge)、L3、ファイアウォール |
 | IaC | Terraform による AWS リソース管理 |
-| Linux 基礎 | 権限管理(SUID/SGID/Sticky/umask)、systemd、プロセス管理 |
-| 資格学習 | LinuC / LPIC Level 1(ping-t 併用) |
-| シェル/運用 | シェルスクリプト・cron による運用自動化 |
 
 ---
 
@@ -106,7 +108,7 @@
 
 | 環境 | 用途 |
 |------|------|
-| AWS(EC2 / VPC / ALB / Route53 など) | クラウド上での多段構成・冗長化検証(メイン) |
+| AWS (EC2 / VPC / ALB / Route53 等) | クラウド上での多段構成・冗長化検証(メイン) |
 | Azure / GCP | 他クラウドでの構築検証(今後) |
 | VirtualBox + Ubuntu | ローカルでの Linux / ネットワーク検証 |
 | Docker / Docker Compose | コンテナ・ネットワーク機能のシミュレーション |
@@ -124,5 +126,5 @@
 
 ## 補足
 
-- 本リポジトリは個人の学習目的で作成しており、所属組織とは関係ありません。
+- 本リポジトリは個人の学習目的で作成しています。
 - 記載内容は学習時点のバージョン・仕様に基づいています。
