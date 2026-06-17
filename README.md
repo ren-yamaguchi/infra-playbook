@@ -125,7 +125,7 @@ Certbot を用いた SSL/TLS 証明書の発行設定。Nginx と BIND の連携
 |------|------|
 | AWS (EC2 / VPC / ALB / Route53 等) | クラウド上での多段構成・冗長化検証(メイン) |
 | Azure / GCP | 他クラウドでの構築検証(今後) |
-| VirtualBox + Ubuntu | ローカルでの Linux / ネットワーク検証 |
+| WSL (Ubuntu on Windows) | ローカルでの Linux / ネットワーク検証 |
 | Docker / Docker Compose | コンテナ・ネットワーク機能のシミュレーション |
 
 ---
