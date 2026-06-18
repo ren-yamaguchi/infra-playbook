@@ -82,7 +82,7 @@
 |-------|------------|----------|--------|------|
 | SSH | TCP | 22 | マイIP | ローカルPCからSSHで接続 |
 | SMTP | TCP | 25 | 0.0.0.0/0 | メールがどこから転送されるか不明なため |
-| POP3 | TCP | 110 | 172.31.0.0/16 | メールを受信する相手を許可するため |
+| POP3 | TCP | 110 | <VPCのCIDR> | メールを受信する相手を許可するため |
 | DNS (UDP) | UDP | 53 | 0.0.0.0/0 | どこから名前解決依頼がくるか不明なため |
 
 ---
@@ -145,7 +145,7 @@ mydomain = <任意の名前>.local
 myorigin = $myhostname
 inet_interfaces = all
 mydestination = $mydomain, $myhostname
-mynetworks = 172.31.0.0/16, 127.0.0.1
+mynetworks = <VPCのCIDR>, 127.0.0.1
 mail_spool_directory = /var/spool/mail/
 # ----------------------
 ```
@@ -210,7 +210,7 @@ vi /var/named/<任意の名前>.local.zone
 ゾーンファイルの編集内容:
 
 ```
-$TTL 3600
+$TTL 60
 @ IN SOA ns.<任意の名前>.local. test.gmail.com. (
     20260616 ; serial
     3600 ; refresh
@@ -224,6 +224,8 @@ $TTL 3600
 ns   IN A <DNSサーバーのプライベートIP>
 mail IN A <SMTPサーバーのプライベートIP>
 ```
+TTL は検証のために 60（60秒）に設定しているが、検証終了後は適した値に設定
+例）3600（1時間）、86400（1日）
 
 ```bash
 # ゾーンファイルの構文チェック
