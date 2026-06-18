@@ -1,4 +1,4 @@
-# 【手順書名】Docker WordPress 環境構築手順書(Apache / PHP / MariaDB)
+# Docker WordPress 環境構築手順書(Apache / PHP / MariaDB)
 
 ------------------------------
 

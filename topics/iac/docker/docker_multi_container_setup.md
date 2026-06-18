@@ -1,4 +1,4 @@
-# 【手順書名】Docker マルチコンテナ環境構築手順書(Jupyter / Java / PostgreSQL / pgAdmin)
+# Docker マルチコンテナ環境構築手順書(Jupyter / Java / PostgreSQL / pgAdmin)
 
 ------------------------------
 
