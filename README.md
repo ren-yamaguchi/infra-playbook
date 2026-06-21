@@ -45,7 +45,7 @@
 ### 総合演習(チーム構築)
 → [`projects/final-exercise/`](projects/final-exercise/)
 
-Web / AP / DB / DNS / SMTP / NFS / NTP / cron など、これまで学んだ技術を統合した総合構築をチームで実施。チーム内でメンバーの技術サポートを行いつつ、期限内の完成に向けて全体の方向性を揃える役割を担当。
+Web / AP / DB / DNS / SMTP / NFS / NTP など、これまで学んだ技術を統合した総合構築をチームで実施。チーム内でメンバーの技術サポートを行いつつ、期限内の完成に向けて全体の方向性を揃える役割を担当。
 
 ### Nginx + Tomcat + PostgreSQL + NFS 5台 Web-AP 冗長構成
 → [`projects/nginx-tomcat-pg-nfs-redundancy/`](projects/nginx-tomcat-pg-nfs-redundancy/)
