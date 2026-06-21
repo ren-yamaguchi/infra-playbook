@@ -9,7 +9,7 @@
 | 手順書名 | ACMとALBを用いたHTTPS化構築 |
 | 作成日 | 2026-06-18 |
 | 最終更新日 | 2026-06-18 |
-| バージョン | v1.0 |
+| バージョン | v1.1 |
 | 対象環境 | AWS（Amazon Linux 2023） |
 
 > **改訂履歴**
@@ -17,6 +17,7 @@
 > | バージョン | 日付 | 変更内容 |
 > |-----------|------|---------|
 > | v1.0 | 2026-06-18 | 初版作成（元`ACM-ALB構築手順書.md`を機能分割して再構成．本手順書はACMインポート以降のAWSコンソール／CLI操作を範囲とする．証明書取得までは別手順書`nsd-public-letsencrypt.md`を参照．構成図追加．プレースホルダーを意味ベース日本語に統一．パラメータ定義表を整理．各Stepに【実施対象】明示．句読点を「，．」に統一．サーバー表記を「サーバー」に統一．付録A〜D追加．） |
+> | v1.1 | 2026-06-20 | 外部DNS手順書の改訂（2台冗長構成化）に伴うファイル名変更を反映．`nsd-public-letsencrypt.md` → `nsd-public-redundancy.md` への参照を全置換．用語「対外DNS」→「外部DNS」に統一． |
 
 ------------------------------
 
@@ -24,11 +25,11 @@
 
 ### 2-1. 目的
 
-> 本手順書では，別手順書（`nsd-public-letsencrypt.md`）で取得済みのLet's Encrypt証明書をAWS Certificate Manager（ACM）にインポートし，Application Load Balancer（ALB）を構築してWebサーバーへのHTTPS通信を実現する手順について説明する．
+> 本手順書では，別手順書（`nsd-public-redundancy.md`）で取得済みのLet's Encrypt証明書をAWS Certificate Manager（ACM）にインポートし，Application Load Balancer（ALB）を構築してWebサーバーへのHTTPS通信を実現する手順について説明する．
 > ALBにはターゲットグループを設定し，HTTP（80）はHTTPSへリダイレクトし，HTTPS（443）はバックエンドのWebサーバーへ転送する．
 >
 > **本手順書の前提：** 証明書ファイル（`cert.pem` / `privkey.pem` / `chain.pem`）が `/etc/letsencrypt/live/<取得するサブドメイン>/` に取得済みであること．
-> **本手順書の範囲外：** 証明書取得（`nsd-public-letsencrypt.md`を参照），Webサーバー自体の構築（`nginx-reverse-proxy.md`等を参照）．
+> **本手順書の範囲外：** 証明書取得（`nsd-public-redundancy.md`を参照），Webサーバー自体の構築（`nginx-reverse-proxy.md`等を参照）．
 
 ### 2-2. 構成概要（アーキテクチャ）
 
@@ -58,7 +59,7 @@
 │         ↑                                                  │
 │         │ インポート                                         │
 │         │                                                  │
-│   別手順書 `nsd-public-letsencrypt.md` で取得                │
+│   別手順書 `nsd-public-redundancy.md` で取得                │
 │   /etc/letsencrypt/live/<取得するサブドメイン>/             │
 │        ├─ cert.pem    ─→ ACM「証明書本文」                  │
 │        ├─ privkey.pem ─→ ACM「プライベートキー」              │
@@ -87,7 +88,7 @@
 | 項目 | 要件 |
 |------|------|
 | Webサーバー | EC2インスタンスで起動済み（例：`nginx-reverse-proxy.md`で構築） |
-| 証明書 | Let's Encryptで取得済み（`nsd-public-letsencrypt.md`完了） |
+| 証明書 | Let's Encryptで取得済み（`nsd-public-redundancy.md`完了） |
 | AWS IAM | ACM／EC2／ELB操作権限 |
 | AWS CLI | ローカルPCもしくは作業EC2にインストール済みで認証情報設定済み |
 | Webサーバーの`/healthcheck` | ヘルスチェック用エンドポイントが200を返す状態 |
@@ -119,7 +120,7 @@
 
 | パラメータ名 | 値 | 説明 |
 |------------|---|------|
-| `<取得するサブドメイン>` | `<記入する>` | `nsd-public-letsencrypt.md`で証明書取得済みのFQDN |
+| `<取得するサブドメイン>` | `<記入する>` | `nsd-public-redundancy.md`で証明書取得済みのFQDN |
 | `<リージョン>` | 例：`us-west-2` | AWSリージョン |
 | `<VPC ID>` | `<記入する>` | ALB／Webサーバーが配置されているVPC |
 | `<AZ1>` | 例：`us-west-2a` | ALBを配置するAZ1 |
@@ -169,7 +170,7 @@ aws sts get-caller-identity --region <リージョン>
 
 > **期待する結果：** `UserId` / `Account` / `Arn` が表示される．
 
-#### 3-5-2. 証明書ファイルの確認【実施対象：対外DNSサーバー】
+#### 3-5-2. 証明書ファイルの確認【実施対象：外部DNSサーバー】
 
 ```bash
 ls -l /etc/letsencrypt/live/<取得するサブドメイン>/
@@ -206,7 +207,7 @@ curl -I http://localhost/healthcheck
 
 **目的：** Let's Encrypt証明書をAWS Certificate Managerに登録する
 
-#### Step 1-1：証明書ファイル内容の準備【実施対象：対外DNSサーバー】
+#### Step 1-1：証明書ファイル内容の準備【実施対象：外部DNSサーバー】
 
 ```bash
 # 証明書本文
@@ -228,9 +229,9 @@ cat /etc/letsencrypt/live/<取得するサブドメイン>/chain.pem
 2. 左メニュー「証明書」をクリック
 3. 右上「証明書をインポート」をクリック
 4. 以下を入力：
-     - 証明書本文       ：cert.pem の内容
+     - 証明書本文              ：cert.pem の内容
      - 証明書のプライベートキー ：privkey.pem の内容
-     - 証明書チェーン   ：chain.pem の内容
+     - 証明書チェーン          ：chain.pem の内容
 5. （任意）タグを追加
 6. 「次へ」→「確認とリクエスト」→「インポート」
 ```
@@ -392,14 +393,14 @@ SG作成後，**作成されたSG IDをパラメータ定義表の `<ALBのSG ID
 
 #### 次の作業の選択肢
 
-- **DNSレコードでこのALBに名前を当てる場合：** Route53または `nsd-public-letsencrypt.md` で設定したNSDサーバーで，`<取得するサブドメイン>` のAレコードをALBの DNS名のCNAMEとして登録．
+- **DNSレコードでこのALBに名前を当てる場合：** Route53または `nsd-public-redundancy.md` で設定したNSDサーバーで，`<取得するサブドメイン>` のAレコードをALBの DNS名のCNAMEとして登録．
 - **ALBのDNS名で直接アクセスする場合：** 証明書とFQDNが一致しないため証明書エラーになる（`curl -k` で動作確認可能）．
 
 > **重要：** 本手順書の完成イメージでは「`<取得するサブドメイン>` でアクセスして緑の鍵マーク」を目指しているため，DNS設定が必要．
 
 #### CNAMEレコードの追加（NSDサーバー側で実施する場合）
 
-`nsd-public-letsencrypt.md` で構築したNSDサーバー上で：
+`nsd-public-redundancy.md` で構築したNSDサーバー上で：
 
 ```bash
 sudo su -
@@ -582,7 +583,7 @@ Let's Encrypt証明書は90日で失効するため，更新運用が必要：
 2. 更新成功後にAWS CLI（`aws acm import-certificate --certificate-arn <既存ARN>`）でACM上の証明書を上書き
 3. 更新失敗の監視
 
-詳細は `nsd-public-letsencrypt.md` 付録D-4を参照．
+詳細は `nsd-public-redundancy.md` 付録D-4を参照．
 
 #### 5-2-2. ALBアクセスログの有効化（推奨）
 
@@ -715,7 +716,7 @@ sudo ss -tlnp | grep :80
 | ACM公式ガイド | https://docs.aws.amazon.com/ja_jp/acm/latest/userguide/ | 証明書管理全般 |
 | ALB公式ガイド | https://docs.aws.amazon.com/ja_jp/elasticloadbalancing/latest/application/ | ALB全般 |
 | ALB セキュリティポリシー | https://docs.aws.amazon.com/ja_jp/elasticloadbalancing/latest/application/create-https-listener.html#describe-ssl-policies | TLSバージョン／暗号スイート |
-| 別手順書：対外DNS構築とLet's Encrypt | `nsd-public-letsencrypt.md` | 本手順書の前提作業 |
+| 別手順書：外部DNS構築とLet's Encrypt | `nsd-public-redundancy.md` | 本手順書の前提作業 |
 | 別手順書：Nginxリバースプロキシ構築 | `nginx-reverse-proxy.md` | バックエンドWebサーバー側 |
 
 ------------------------------
@@ -753,7 +754,7 @@ aws ec2 revoke-security-group-ingress \
     --region <リージョン>
 ```
 
-### 8-3. DNS CNAMEレコードの削除（NSDで設定した場合）【実施対象：対外DNSサーバー】
+### 8-3. DNS CNAMEレコードの削除（NSDで設定した場合）【実施対象：外部DNSサーバー】
 
 ```bash
 sudo su -
@@ -824,7 +825,7 @@ dig <ALB名>-XXXXXXXXX.us-west-2.elb.amazonaws.com +short
 curl -I http://<Webサーバーのパブリック/プライベートIP>:80
 ```
 
-> **注意：** Let's Encrypt証明書ファイル自体は `/etc/letsencrypt/live/` に残る．削除する場合は `nsd-public-letsencrypt.md` 8-3を参照．
+> **注意：** Let's Encrypt証明書ファイル自体は `/etc/letsencrypt/live/` に残る．削除する場合は `nsd-public-redundancy.md` 8-3を参照．
 
 ------------------------------
 

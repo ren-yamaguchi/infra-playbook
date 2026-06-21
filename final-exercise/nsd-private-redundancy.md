@@ -27,7 +27,7 @@
 ### 2-1. 目的
 
 > 本手順書では，AWSのEC2インスタンス上に「NSD（Name Server Daemon）」を用いた内部DNS（権威DNS）サーバーを2台構築し，AZ2をPrimary，AZ4をSecondaryとする冗長構成を組む手順について説明する．
-> 内部ドメイン `wp.local` の名前解決を提供し，VPC内の各サーバー（Web／AP／DB／Zabbix／SMTP等）が `<ホスト名>.wp.local` 形式のFQDNで相互通信できる状態を目指す．
+> 内部ドメイン `ex.local` の名前解決を提供し，VPC内の各サーバー（Web／AP／DB／Zabbix／SMTP等）が `<ホスト名>.ex.local` 形式のFQDNで相互通信できる状態を目指す．
 > ゾーンファイルはPrimaryでのみ作成・管理し，SecondaryはAXFR（ゾーン転送）で取得する．
 
 ### 2-2. 構成概要（アーキテクチャ）
@@ -38,7 +38,7 @@
   AZ2 / az2-dns         │                  AZ4 / az4-dns
   ┌───────────────┐     │     ┌───────────────┐
   │  NSD (master) ├─────┴─────► NSD (slave)   │
-  │  wp.local.zone│   AXFR    │  wp.local.zone│
+  │  ex.local.zone│   AXFR    │  ex.local.zone│
   │  (手動作成)    │ (TCP 53)  │  (AXFRで取得)  │
   └───────┬───────┘           └───────┬───────┘
           │                           │
@@ -56,9 +56,9 @@
 
 - [ ] Primary・Secondary両方で`nsd.service` が`active (running)`かつ自動起動有効である
 - [ ] Primary・Secondary両方でUDP/53・TCP/53がLISTENしている
-- [ ] Primaryでゾーンファイル `wp.local.zone` が読み込まれ，`nsd-control zonestatus wp.local` が `state: ok` を返す
-- [ ] SecondaryでAXFRが成功し，`nsd-control zonestatus wp.local` が `state: ok` かつPrimaryと同じシリアル番号を返す
-- [ ] VPC内の任意のサーバーから `dig @<Primary DNSのIP> <任意のホスト名>.wp.local +short` で正しいIPが返る
+- [ ] Primaryでゾーンファイル `ex.local.zone` が読み込まれ，`nsd-control zonestatus ex.local` が `state: ok` を返す
+- [ ] SecondaryでAXFRが成功し，`nsd-control zonestatus ex.local` が `state: ok` かつPrimaryと同じシリアル番号を返す
+- [ ] VPC内の任意のサーバーから `dig @<Primary DNSのIP> <任意のホスト名>.ex.local +short` で正しいIPが返る
 - [ ] 同様にSecondaryに対しても同じ結果が返る
 
 ------------------------------
@@ -121,7 +121,7 @@
 | `<DNSサーバーのホスト名(Secondary)>` | `<記入する>` | Secondary DNSのホスト名 |
 | `<Primary DNSのIP>` | `<記入する>` | AZ2 PrimaryのプライベートIP |
 | `<Secondary DNSのIP>` | `<記入する>` | AZ4 SecondaryのプライベートIP |
-| `<内部ドメイン名>` | `wp.local` | 内部DNSで管理するドメイン名 |
+| `<内部ドメイン名>` | `ex.local` | 内部DNSで管理するドメイン名 |
 | `<ゾーンシリアル番号>` | 例：`20260618` | ゾーンの更新日（YYYYMMDDnn形式推奨） |
 | `<SOA管理者メール>` | 例：`test.gmail.com.` | SOAレコードの管理者メール（`@`→`.`に置換，末尾`.`必須） |
 
@@ -197,7 +197,7 @@ dnf install -y nmap-ncat
 mkdir -p /etc/systemd/resolved.conf.d
 
 # 内部DNSを参照する設定ファイルを作成
-vi /etc/systemd/resolved.conf.d/wp-local.conf
+vi /etc/systemd/resolved.conf.d/ex-local.conf
 ```
 
 設定ファイルの記述内容：
@@ -302,8 +302,8 @@ pattern:
     notify: <Secondary DNSのIP> NOKEY
 
 zone:
-    name: "wp.local"
-    zonefile: "wp.local.zone"
+    name: "ex.local"
+    zonefile: "ex.local.zone"
     include-pattern: "master-wplocal"
 ```
 
@@ -321,28 +321,28 @@ nsd-checkconf /etc/nsd/nsd.conf
 
 ### Primary Step 5：ゾーンファイルの作成【実施対象：Primary DNS】
 
-**目的：** `wp.local` ゾーンのAレコードを定義する
+**目的：** `ex.local` ゾーンのAレコードを定義する
 
 #### 操作手順
 
 ```bash
 # ゾーンファイルを編集
-vi /etc/nsd/wp.local.zone
+vi /etc/nsd/ex.local.zone
 ```
 
 設定ファイルの記述内容：
 
 ```
 $TTL 60
-@ IN SOA ns1.wp.local. <SOA管理者メール> (
+@ IN SOA ns1.ex.local. <SOA管理者メール> (
         <ゾーンシリアル番号> ; serial
         60                  ; refresh
         60                  ; retry
         3600                ; expire
         60 )                ; minimum
 
-        IN NS ns1.wp.local.
-        IN NS ns2.wp.local.
+        IN NS ns1.ex.local.
+        IN NS ns2.ex.local.
 
 ns1        IN A <Primary DNSのIP>
 ns2        IN A <Secondary DNSのIP>
@@ -388,8 +388,8 @@ az4-zabbix IN A <AZ4のZabbix IP>
 
 ```bash
 # ゾーンファイル構文チェック
-nsd-checkzone wp.local /etc/nsd/wp.local.zone
-# → zone wp.local is ok が出れば成功
+nsd-checkzone ex.local /etc/nsd/ex.local.zone
+# → zone ex.local is ok が出れば成功
 ```
 
 ------------------------------
@@ -423,19 +423,19 @@ systemctl is-enabled nsd.service
 
 ```bash
 # ゾーン状態確認
-nsd-control zonestatus wp.local
+nsd-control zonestatus ex.local
 ```
 
 > **期待する結果：**
 > ```
-> zone:    wp.local
+> zone:    ex.local
 >     state: ok
 >     served-serial: "<ゾーンシリアル番号> since ..."
 > ```
 
 ```bash
 # 自身に対するdig問い合わせ
-dig @127.0.0.1 az2-db.wp.local +short
+dig @127.0.0.1 az2-db.ex.local +short
 ```
 
 > **期待する結果：** パラメータ定義表の `<AZ2のDB系IP>` の値が返る．
@@ -465,7 +465,7 @@ command -v nc
 dnf install -y nmap-ncat
 
 mkdir -p /etc/systemd/resolved.conf.d
-vi /etc/systemd/resolved.conf.d/wp-local.conf
+vi /etc/systemd/resolved.conf.d/ex-local.conf
 ```
 
 設定ファイルの記述内容：
@@ -547,8 +547,8 @@ pattern:
     allow-notify: <Primary DNSのIP> NOKEY
 
 zone:
-    name: "wp.local"
-    zonefile: "wp.local.zone"
+    name: "ex.local"
+    zonefile: "ex.local.zone"
     include-pattern: "slave-wplocal"
 ```
 
@@ -581,16 +581,16 @@ systemctl is-enabled nsd.service
 
 ```bash
 # ゾーンのリロード要求
-nsd-control reload wp.local
+nsd-control reload ex.local
 
 # 少し待ってから確認
 sleep 3
-nsd-control zonestatus wp.local
+nsd-control zonestatus ex.local
 ```
 
 > **期待する結果：**
 > ```
-> zone:    wp.local
+> zone: ex.local
 >     state: ok
 >     served-serial: "<ゾーンシリアル番号> since ..."
 > ```
@@ -640,7 +640,7 @@ ss -lnp | grep :53
 ### 確認③：ゾーン状態確認（両サーバーで実施）
 
 ```bash
-nsd-control zonestatus wp.local
+nsd-control zonestatus ex.local
 ```
 
 **期待する結果：** 両サーバーで同じ`served-serial`値かつ `state: ok`．
@@ -650,7 +650,7 @@ nsd-control zonestatus wp.local
 ### 確認④：Primaryへの名前解決テスト（VPC内サーバーから）
 
 ```bash
-dig @<Primary DNSのIP> az2-db.wp.local +short
+dig @<Primary DNSのIP> az2-db.ex.local +short
 ```
 
 **期待する結果：** ゾーンファイルに記載した `<AZ2のDB系IP>` の値が返る．
@@ -660,7 +660,7 @@ dig @<Primary DNSのIP> az2-db.wp.local +short
 ### 確認⑤：Secondaryへの名前解決テスト（VPC内サーバーから）
 
 ```bash
-dig @<Secondary DNSのIP> az2-db.wp.local +short
+dig @<Secondary DNSのIP> az2-db.ex.local +short
 ```
 
 **期待する結果：** Primaryと同じIPが返る．
@@ -676,7 +676,7 @@ Primary停止状態でSecondaryのみで解決できることを確認．
 systemctl stop nsd.service
 
 # クライアント側で（systemd-resolvedがSecondaryにフォールバック）
-getent hosts az2-db.wp.local
+getent hosts az2-db.ex.local
 
 # Primary復旧
 systemctl start nsd.service
@@ -708,8 +708,8 @@ systemctl start nsd.service
 3. SG修正後，再度AXFRを要求：
 
    ```bash
-   nsd-control reload wp.local
-   nsd-control zonestatus wp.local
+   nsd-control reload ex.local
+   nsd-control zonestatus ex.local
    ```
 
 > **補足：** UDP/53のみではAXFRはできない．TCP/53は必須．
@@ -724,16 +724,16 @@ systemctl start nsd.service
 
 ```bash
 # 現在のゾーンファイル確認
-cat /etc/nsd/wp.local.zone
+cat /etc/nsd/ex.local.zone
 
 # 必要なレコードを追加 + serialインクリメント
-vi /etc/nsd/wp.local.zone
+vi /etc/nsd/ex.local.zone
 
 # 構文チェック
-nsd-checkzone wp.local /etc/nsd/wp.local.zone
+nsd-checkzone ex.local /etc/nsd/ex.local.zone
 
 # リロード
-nsd-control reload wp.local
+nsd-control reload ex.local
 ```
 
 > **重要：** serialをインクリメントしないとSecondaryへ転送されない．
@@ -784,7 +784,7 @@ systemctl restart nsd.service
 |-----------|------------|
 | NSDログ | `/var/log/nsd.log` |
 | systemdログ | `journalctl -u nsd.service` |
-| ゾーン状態 | `nsd-control zonestatus wp.local` |
+| ゾーン状態 | `nsd-control zonestatus ex.local` |
 
 ------------------------------
 
@@ -816,10 +816,10 @@ systemctl disable nsd.service
 
 ```bash
 # 存在確認
-ls /etc/nsd/wp.local.zone 2>/dev/null
+ls /etc/nsd/ex.local.zone 2>/dev/null
 
 # 存在する場合のみ削除
-rm -f /etc/nsd/wp.local.zone
+rm -f /etc/nsd/ex.local.zone
 ```
 
 > **補足：** Primaryでは手動作成したファイル，SecondaryではAXFRで取得されたファイルを削除．
@@ -848,7 +848,7 @@ dnf remove -y nsd spal-release
 ### 8-5. systemd-resolvedのDNS設定削除【実施対象：Primary／Secondary】
 
 ```bash
-rm -f /etc/systemd/resolved.conf.d/wp-local.conf
+rm -f /etc/systemd/resolved.conf.d/ex-local.conf
 systemctl restart systemd-resolved
 ```
 
@@ -954,11 +954,11 @@ pattern:
 - `request-xfr`：AXFRを要求する相手．PrimaryのIPを指定．
 - `allow-notify`：NOTIFYの受信を許可する相手．PrimaryのIPを指定．
 
-**`/etc/nsd/wp.local.zone`（Primaryのみ作成）**
+**`/etc/nsd/ex.local.zone`（Primaryのみ作成）**
 
 ```
 $TTL 60
-@ IN SOA ns1.wp.local. <SOA管理者メール> (
+@ IN SOA ns1.ex.local. <SOA管理者メール> (
         <ゾーンシリアル番号> ; serial
         60                  ; refresh
         60                  ; retry
@@ -969,7 +969,7 @@ $TTL 60
 > **補足：** 上記は **構築・検証中の暫定値**．動作確認完了後は本番運用向けの推奨値（`$TTL=3600` / `refresh=3600` / `retry=900` / `expire=604800` / `minimum=300`）に変更すること．詳細は本文 Primary Step 5 の注意ブロックを参照．
 
 - `$TTL`：レコードのデフォルトTTL（秒）．キャッシュ保持時間．
-- `@`：ゾーン名のショートカット（ここでは `wp.local`）．
+- `@`：ゾーン名のショートカット（ここでは `ex.local`）．
 - `SOA`：ゾーンの管理情報レコード．
   - 第1引数：プライマリネームサーバー名（FQDN，末尾`.`必須）．
   - 第2引数：管理者メール（`@`を`.`に置換した形式，末尾`.`必須）．
@@ -991,7 +991,7 @@ $TTL 60
 | 権威DNS | 自分が管理するゾーンの情報に対して権威ある回答を返すDNSサーバー．NSDは権威DNS専用． |
 | キャッシュDNS | 他のDNSへの問い合わせを代行し，結果をキャッシュするDNSサーバー（NSDではなくUnbound等が担当）． |
 | NSD | Name Server Daemon．NLnet Labsが開発する権威DNS実装． |
-| ゾーン | DNSで管理する名前空間の単位（例：`wp.local`）． |
+| ゾーン | DNSで管理する名前空間の単位（例：`ex.local`）． |
 | ゾーンファイル | ゾーンのレコード情報を記述したテキストファイル． |
 | Primary（master） | ゾーンファイルを保持し，権威ある情報を提供するDNS． |
 | Secondary（slave） | PrimaryからAXFRでゾーンを取得して提供するDNS．冗長化目的． |
@@ -1004,7 +1004,7 @@ $TTL 60
 | TTL | Time To Live．DNSキャッシュの保持時間（秒）． |
 | シリアル番号 | ゾーンのバージョン番号．SecondaryはこれでPrimaryの更新を検知する． |
 | TSIG | Transaction Signature．DNS通信を共通鍵で認証する仕組み．本手順書では`NOKEY`（未使用）． |
-| FQDN | Fully Qualified Domain Name．完全修飾ドメイン名（例：`az2-db.wp.local`）． |
+| FQDN | Fully Qualified Domain Name．完全修飾ドメイン名（例：`az2-db.ex.local`）． |
 | systemd-resolved | systemd付属のローカルDNSキャッシュ／リゾルバ． |
 
 ------------------------------
@@ -1019,7 +1019,7 @@ $TTL 60
 - **シリアル番号の運用ルール**
   - 形式：`YYYYMMDDnn`（例：`2026061801` ＝ 2026年6月18日の1回目の更新）が一般的．
   - ゾーンファイルを更新したら **必ずシリアルをインクリメント** する．忘れるとSecondaryへ転送されない．
-  - インクリメント後 `nsd-control reload wp.local` を実行し，Secondaryで `nsd-control zonestatus wp.local` で新しいシリアルが反映されたか確認．
+  - インクリメント後 `nsd-control reload ex.local` を実行し，Secondaryで `nsd-control zonestatus ex.local` で新しいシリアルが反映されたか確認．
 
 - **PrimaryとSecondaryの設定差分**
   - Primary側：`provide-xfr: <Secondary DNSのIP> NOKEY` / `notify: <Secondary DNSのIP> NOKEY`
@@ -1031,7 +1031,7 @@ $TTL 60
   - これは検証環境向けの設定．本番環境では別の方法（自前ビルド，BIND/Unboundの併用等）を検討する場合がある．
 
 - **systemd-resolvedとの関係**
-  - systemd-resolved は `/etc/systemd/resolved.conf.d/wp-local.conf` の設定で内部DNSを参照する．
+  - systemd-resolved は `/etc/systemd/resolved.conf.d/ex-local.conf` の設定で内部DNSを参照する．
   - **NSDが落ちている状態で systemd-resolved が NSDを指したままだと自サーバーの名前解決が失敗する** ため，ロールバック時には先にresolved.conf.dのドロップインを削除すること．
   - また，systemd-resolved自身が53番のスタブリスナーを持つ場合がある（`DNSStubListener=yes`）．NSDが53番を使うのと競合する可能性があるため，NSDが起動しない場合は `DNSStubListener=no` を検討する．
 
@@ -1039,7 +1039,7 @@ $TTL 60
 
   ```
   1. Primary でゾーンファイル更新 + serialインクリメント
-  2. Primary: nsd-control reload wp.local
+  2. Primary: nsd-control reload ex.local
   3. Primary → Secondary に NOTIFY 送信（UDP/53）
   4. Secondary がNOTIFYを受信
   5. Secondary → Primary に AXFR要求（TCP/53）

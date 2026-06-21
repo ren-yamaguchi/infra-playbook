@@ -33,26 +33,26 @@
 ### 2-2. 構成概要（アーキテクチャ）
 
 ```
-┌────────────────────────── VPC ──────────────────────────┐
+┌────────────────────────── VPC ───────────────────────────┐
 │                                                          │
 │  [Private-AZ2: DB／NFS同居サーバー]                       │
 │    ├─ Amazon Linux 2023                                  │
-│    ├─ PostgreSQL 15（`postgresql-server.md` で構築済）      │
-│    ├─ nfs-utils（NFSv4サーバー）                           │
+│    ├─ PostgreSQL 15（`postgresql-server.md` で構築済）    │
+│    ├─ nfs-utils（NFSv4サーバー）                          │
 │    │     └─ TCP/2049                                     │
-│    │     └─ /etc/exports でエクスポート設定              │
+│    │     └─ /etc/exports でエクスポート設定                │
 │    │                                                     │
-│    └─ /exports/<アプリケーションデータパス>                 │
-│         （ルートボリューム上のディレクトリ）                  │
+│    └─ /exports/<アプリケーションデータパス>                │
+│         （ルートボリューム上のディレクトリ）                │
 │                                                          │
 │                ▲                  ▲                      │
-│                │ TCP/2049         │ TCP/2049              │
+│                │ TCP/2049         │ TCP/2049             │
 │                │                  │                      │
 │  [Private-AZ2: AP1]      [Private-AZ4: AP2]              │
-│    └─ Tomcat              └─ Tomcat                       │
+│    └─ Tomcat              └─ Tomcat                      │
 │       └─ /mnt/<アプリ      └─ /mnt/<アプリ                │
-│          ケーションデータ      ケーションデータ              │
-│          パス>                 パス>                       │
+│          ケーションデータ      ケーションデータ             │
+│          パス>                 パス>                      │
 │         （NFSマウント）       （NFSマウント）              │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
@@ -143,7 +143,7 @@
 #### 3-5-1. PostgreSQL構築完了確認【実施対象：DB／NFS同居サーバー】
 
 ```bash
-systemctl status postgresql-15.service --no-pager | head -3
+systemctl status postgresql.service --no-pager | head -3
 ```
 
 > **期待する結果：** `Active: active (running)` であること．未構築の場合は先に `postgresql-server.md` を完了させる．

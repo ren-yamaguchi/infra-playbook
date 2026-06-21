@@ -9,7 +9,7 @@
 | 手順書名 | Zabbix Agent2 7.0 構築 |
 | 作成日 | 2026-06-18 |
 | 最終更新日 | 2026-06-18 |
-| バージョン | v1.0 |
+| バージョン | v1.1 |
 | 対象環境 | AWS（Amazon Linux 2023） |
 
 > **改訂履歴**
@@ -17,6 +17,7 @@
 > | バージョン | 日付 | 変更内容 |
 > |-----------|------|---------|
 > | v1.0 | 2026-06-18 | 初版作成（テンプレートに沿って再構成．構成図追加．プレースホルダーを意味ベース日本語に統一．`zabbix-server.md`と命名を整合．パラメータ定義表を整理．SG設定セクションを追加．ロールバック手順を新設．各Stepに【実施対象】明示．句読点を「，．」に統一．「Zabbixサーバー」（長音記号あり）に統一．`systemctl enable --now`に統一．複数台一括実行は付録Dへ移動．付録A〜D追加．） |
+> | v1.1 | 2026-06-20 | 内部DNS（`nsd-private-redundancy.md`）の名前解決設定漏れに対応．Step 1を「タイムゾーン設定」から「システム設定（タイムゾーン・ホスト名・名前解決）」に拡張．重複設定はスキップ可能なテンプレート手順として記載．パラメータ表に `<監視対象サーバーのホスト名>` `<Primary DNSのIP>` `<Secondary DNSのIP>` 追加．ロールバック手順8-6（条件付きDNS削除）を追加し，旧8-6を8-7に繰り上げ． |
 
 ------------------------------
 
@@ -35,20 +36,20 @@
 │                                                          │
 │  [EC2: Zabbixサーバー]                                    │
 │      ├─ zabbix-server-pgsql（10051番）                    │
-│      │     ▲ Active                                      │
-│      │     │ TCP/10051                                   │
-│      │     │                                             │
+│      │    ▲ Active                                      │
+│      │    │ TCP/10051                                   │
+│      │    │                                             │
 │      └─ Web GUI（80番）── ホスト登録・テンプレート割当      │
 │           │                                              │
 │           │ TCP/10050 (Passive)                          │
 │           ▼                                              │
-│  [EC2: 監視対象サーバー × N台]                              │
+│  [EC2: 監視対象サーバー × N台]                             │
 │      └─ zabbix-agent2（10050番）                          │
-│           └─ Hostname=<エージェントのホスト名>              │
+│           └─ Hostname=<エージェントのホスト名>             │
 │                                                          │
-│   ホスト登録方式：                                          │
-│      A. 自動登録（推奨）                                    │
-│      B. 手動登録                                           │
+│   ホスト登録方式：                                         │
+│      A. 自動登録（推奨）                                   │
+│      B. 手動登録                                          │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -102,6 +103,9 @@
 | パラメータ名 | 値 | 説明 |
 |------------|---|------|
 | `<ZabbixサーバーのプライベートIP>` | `<記入する>` | Zabbixサーバーのプライベート IP（`zabbix-server.md`で構築済み） |
+| `<監視対象サーバーのホスト名>` | `<記入する>` | このサーバーのホスト名（例：`web-az1`，`ap-az2`） |
+| `<Primary DNSのIP>` | `<記入する>` | 内部DNSプライマリ（AZ2のAPサーバー）のIP |
+| `<Secondary DNSのIP>` | `<記入する>` | 内部DNSセカンダリ（AZ4のAPサーバー）のIP |
 
 #### 監視対象サーバー一覧
 
@@ -133,9 +137,11 @@
 
 ------------------------------
 
-### Step 1：タイムゾーン設定【実施対象：監視対象サーバー】
+### Step 1：システム設定（タイムゾーン・ホスト名・名前解決）【実施対象：監視対象サーバー】
 
-**目的：** システムのタイムゾーンを `Asia/Tokyo` に設定する
+**目的：** タイムゾーン，ホスト名，内部DNSの名前解決先を設定する
+
+> **補足：** 監視対象サーバーで既に他の構築手順書（`tomcat-basic.md` `postgresql-server.md` `nginx-reverse-proxy.md` 等）により本設定が完了している場合は，本Stepの該当項目はスキップ可能．既存設定との重複は問題なし．
 
 #### 操作手順
 
@@ -149,11 +155,45 @@ dnf update -y
 # タイムゾーンを設定
 timedatectl set-timezone Asia/Tokyo
 timedatectl status
+
+# ホスト名を設定（未設定の場合のみ）
+hostnamectl set-hostname <監視対象サーバーのホスト名>
+
+# 通信確認ツール（nc）の存在確認
+command -v nc
+# → 何も表示されなければ未インストール
+
+# nc が未インストールの場合のみ実行
+dnf install -y nmap-ncat
+
+# systemd-resolved 設定用ディレクトリ作成（既存の場合はスキップ）
+mkdir -p /etc/systemd/resolved.conf.d
+
+# 既存設定確認
+ls /etc/systemd/resolved.conf.d/ex-local.conf 2>/dev/null && echo "既に設定済み" || echo "未設定．次のステップを実施"
+
+# 未設定の場合のみ実施：内部DNSを参照する設定ファイルを作成
+vi /etc/systemd/resolved.conf.d/ex-local.conf
 ```
 
-> **期待する結果：** `Time zone: Asia/Tokyo (JST, +0900)` が表示される．
+設定ファイルの記述内容（未設定の場合のみ）：
 
-> **補足：** 他の構築手順書（`tomcat-basic.md` 等）で既にtimezoneを設定済みの場合はスキップ可能．
+```
+[Resolve]
+DNS=<Primary DNSのIP> <Secondary DNSのIP>
+```
+
+```bash
+# 新規作成した場合のみ実施：systemd-resolved を再起動
+systemctl restart systemd-resolved
+
+# 名前解決確認（共通実施）
+resolvectl status | grep -A 2 "Current DNS"
+```
+
+> **期待する結果：** `Current DNS Server: <Primary DNSのIP>` が表示される．
+
+> **注意：** 本ステップは `nsd-private-redundancy.md` で内部DNSが構築されていることが前提．未構築の場合は名前解決確認はスキップして次のStepに進む．
 
 ------------------------------
 
@@ -532,7 +572,17 @@ rm -rf /etc/zabbix /var/log/zabbix
 rpm -e zabbix-release
 ```
 
-### 8-6. 完了確認【実施対象：監視対象サーバー】
+### 8-6. systemd-resolvedのDNS設定削除（任意）【実施対象：監視対象サーバー】
+
+> **重要：** 本サーバーで他のMW（Tomcat／PostgreSQL／Nginx等）も稼働している場合は，このStepはスキップすること．DNS設定を削除すると他のMWの名前解決に影響する．**zabbix-agent2 のみが稼働している監視対象サーバーで，本手順書の Step 1 で初めてDNS設定した場合のみ実施する**．
+
+```bash
+# 他MWが稼働していない監視対象サーバーの場合のみ
+rm -f /etc/systemd/resolved.conf.d/ex-local.conf
+systemctl restart systemd-resolved
+```
+
+### 8-7. 完了確認【実施対象：監視対象サーバー】
 
 ```bash
 systemctl status zabbix-agent2 2>&1 | head -3

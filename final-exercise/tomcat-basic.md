@@ -9,7 +9,7 @@
 | 手順書名 | Tomcatを用いたAPサーバー構築 |
 | 作成日 | 2026-06-18 |
 | 最終更新日 | 2026-06-18 |
-| バージョン | v1.0 |
+| バージョン | v1.1 |
 | 対象環境 | AWS（Amazon Linux 2023） |
 
 > **改訂履歴**
@@ -17,6 +17,7 @@
 > | バージョン | 日付 | 変更内容 |
 > |-----------|------|---------|
 > | v1.0 | 2026-06-18 | 初版作成（テンプレートに沿って再構成．構成図追加．`tomcat.service`に`PIDFile`追加．プレースホルダーを意味ベースに統一．パラメータ定義表を統合．各Stepに【実施対象】明示．句読点を「，．」に統一．サーバー表記を「サーバー」に統一．付録A〜D追加．） |
+> | v1.1 | 2026-06-20 | DNS関連プレースホルダーを `nsd-private-redundancy.md` と統一．`<プライマリDNSのIP>` → `<Primary DNSのIP>`，`<セカンダリDNSのIP>` → `<Secondary DNSのIP>` に変更（パラメータ表・Step 1）． |
 
 ------------------------------
 
@@ -36,7 +37,7 @@
        |
        | HTTP（8080）
        v
-┌────────────────────────── VPC ──────────────────────────┐
+┌────────────────────────── VPC ───────────────────────────┐
 │                                                          │
 │  [EC2: APサーバー]                                        │
 │    ├─ Amazon Corretto（Java実行環境）                     │
@@ -100,8 +101,8 @@
 | パラメータ名 | 値 | 説明 |
 |------------|---|------|
 | `<APサーバーのホスト名>` | `<記入する>` | このサーバーのホスト名（例：`<任意の名前>-ap`） |
-| `<プライマリDNSのIP>` | `<記入する>` | 内部DNSプライマリ（AZ2のAPサーバー）のIP |
-| `<セカンダリDNSのIP>` | `<記入する>` | 内部DNSセカンダリ（AZ4のAPサーバー）のIP |
+| `<Primary DNSのIP>` | `<記入する>` | 内部DNSプライマリ（AZ2のAPサーバー）のIP |
+| `<Secondary DNSのIP>` | `<記入する>` | 内部DNSセカンダリ（AZ4のAPサーバー）のIP |
 | `<Javaバージョン>` | 例：`17` | Amazon Correttoのメジャーバージョン（8系=1.8.0／11系=11／17系=17） |
 | `<TOMCAT_URL>` | `<記入する>` | Tomcat配布物URL（Apache公式から最新版を取得） |
 | `<TOMCAT_TGZ>` | `<記入する>` | アーカイブファイル名（`<TOMCAT_URL>`のbasename） |
@@ -169,14 +170,14 @@ dnf install -y nmap-ncat
 mkdir -p /etc/systemd/resolved.conf.d
 
 # 内部DNSを参照する設定ファイルを作成
-vi /etc/systemd/resolved.conf.d/wp-local.conf
+vi /etc/systemd/resolved.conf.d/ex-local.conf
 ```
 
 設定ファイルの記述内容：
 
 ```
 [Resolve]
-DNS=<プライマリDNSのIP> <セカンダリDNSのIP>
+DNS=<Primary DNSのIP> <Secondary DNSのIP>
 ```
 
 ```bash
@@ -644,7 +645,7 @@ dnf remove -y java-<Javaバージョン>-amazon-corretto-devel
 ### 8-7. systemd-resolvedのDNS設定削除【実施対象：APサーバー】
 
 ```bash
-rm -f /etc/systemd/resolved.conf.d/wp-local.conf
+rm -f /etc/systemd/resolved.conf.d/ex-local.conf
 systemctl restart systemd-resolved
 ```
 

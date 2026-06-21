@@ -9,7 +9,7 @@
 | 手順書名 | Nginxを用いたリバースプロキシ構築 |
 | 作成日 | 2026-06-18 |
 | 最終更新日 | 2026-06-18 |
-| バージョン | v1.0 |
+| バージョン | v1.2 |
 | 対象環境 | AWS（Amazon Linux 2023） |
 
 > **改訂履歴**
@@ -18,6 +18,7 @@
 > |-----------|------|---------|
 > | v1.0 | 2026-06-18 | 初版作成（テンプレートに沿って再構成．Amazon Corretto導入手順を削除．ModSecurity関連を別手順書`modsecurity-migration.md`に分離．ハードコード値をプレースホルダー化．構成図・チェックリスト・付録を追加．句読点を「，．」に統一．サーバー表記を「サーバー」に統一．【実施対象】明示．`dnf install`引数順統一．） |
 > | v1.1 | 2026-06-19 | 整合性チェックにより8章ロールバック手順を追加（他手順書と章構成を統一）． |
+> | v1.2 | 2026-06-20 | 内部DNS（`nsd-private-redundancy.md`）の名前解決設定漏れに対応．構築手順とロールバック手順の不整合（構築手順にDNS設定がないがロールバックには削除コマンドがあった）を解消．新Step 1「システム設定（タイムゾーン・ホスト名・名前解決）」を追加し，旧Step 1〜5をStep 2〜6に繰り上げ．パラメータ表に `<Webサーバーのホスト名>` `<Primary DNSのIP>` `<Secondary DNSのIP>` 追加．ロールバック手順8-6を「同居サーバーの場合」から一般化． |
 
 ------------------------------
 
@@ -35,17 +36,17 @@
        |
        | HTTP（80）
        v
-┌────────────────────────── VPC ──────────────────────────┐
+┌────────────────────────── VPC ───────────────────────────┐
 │                                                          │
 │  [EC2: Webサーバー]                                       │
 │    └─ Nginx（80番ポート）                                 │
 │         ├─ /healthcheck → 200 OK（ヘルスチェック用）       │
-│         └─ /  → upstream knowledge_cluster へプロキシ転送  │
+│         └─ /  → upstream knowledge_cluster へプロキシ転送 │
 │                                |                         │
-│                                | HTTP（8080）             │
+│                                | HTTP（8080）            │
 │                                v                         │
 │  [EC2: APサーバー]                                        │
-│    └─ Tomcat / アプリケーション（8080番ポート）            │
+│    └─ Tomcat / アプリケーション（8080番ポート）             │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -94,7 +95,10 @@
 
 | パラメータ名 | 値 | 説明 |
 |------------|---|------|
-| `<APサーバーのFQDN>` | `<記入する>` | プロキシ転送先のAPサーバーのFQDN（例：`<任意の名前>-ap.wp.local`） |
+| `<Webサーバーのホスト名>` | `<記入する>` | このサーバーのホスト名（例：`web-az1`） |
+| `<Primary DNSのIP>` | `<記入する>` | 内部DNSプライマリ（AZ2のAPサーバー）のIP |
+| `<Secondary DNSのIP>` | `<記入する>` | 内部DNSセカンダリ（AZ4のAPサーバー）のIP |
+| `<APサーバーのFQDN>` | `<記入する>` | プロキシ転送先のAPサーバーのFQDN（例：`<任意の名前>-ap.ex.local`） |
 | `<APサーバーのプライベートIP>` | `<記入する>` | APサーバーのプライベートIP（FQDNが使えない場合の代替） |
 | `<WebサーバーのパブリックIP>` | `<記入する>` | ローカルPCからのアクセス先 |
 
@@ -115,13 +119,11 @@
 
 ------------------------------
 
-### Step 1：事前確認【実施対象：Webサーバー】
+### Step 1：システム設定（タイムゾーン・ホスト名・名前解決）【実施対象：Webサーバー】
 
-**目的：** APサーバーへの疎通およびrootユーザー権限を確認する
+**目的：** タイムゾーン，ホスト名，内部DNSの名前解決先を設定する
 
 #### 操作手順
-
-WebサーバーにSSH接続後，以下を実行する．
 
 ```bash
 # rootユーザーにスイッチ
@@ -130,6 +132,58 @@ sudo su -
 # パッケージを最新化
 dnf update -y
 
+# タイムゾーンを Asia/Tokyo に設定
+timedatectl set-timezone Asia/Tokyo
+
+# ホスト名を設定
+hostnamectl set-hostname <Webサーバーのホスト名>
+
+# 通信確認ツール（nc）の存在確認
+command -v nc
+# → 何も表示されなければ未インストール
+
+# nc が未インストールの場合のみ実行
+dnf install -y nmap-ncat
+
+# systemd-resolved 設定用ディレクトリ作成
+mkdir -p /etc/systemd/resolved.conf.d
+
+# 内部DNSを参照する設定ファイルを作成
+vi /etc/systemd/resolved.conf.d/ex-local.conf
+```
+
+設定ファイルの記述内容：
+
+```
+[Resolve]
+DNS=<Primary DNSのIP> <Secondary DNSのIP>
+```
+
+```bash
+# systemd-resolved を再起動
+systemctl restart systemd-resolved
+
+# 名前解決確認
+resolvectl status | grep -A 2 "Current DNS"
+```
+
+> **期待する結果：** `Current DNS Server: <Primary DNSのIP>` が表示される．
+
+> **注意：** ホスト名をシェルのプロンプトに反映させるため，作業途中で一度SSHを切断して再接続すること．
+
+> **注意：** 本ステップは `nsd-private-redundancy.md` で内部DNSが構築されていることが前提．Step 2の `<APサーバーのFQDN>` の名前解決も本Stepで設定したDNSを介して行われる．
+
+------------------------------
+
+### Step 2：事前確認【実施対象：Webサーバー】
+
+**目的：** APサーバーへの疎通およびrootユーザー権限を確認する
+
+#### 操作手順
+
+WebサーバーにSSH接続後，以下を実行する．
+
+```bash
 # APサーバーの名前解決確認
 getent hosts <APサーバーのFQDN>
 # → IPアドレスが表示されれば成功
@@ -143,7 +197,7 @@ curl -I http://<APサーバーのFQDN>:8080
 
 ------------------------------
 
-### Step 2：Nginxインストール【実施対象：Webサーバー】
+### Step 3：Nginxインストール【実施対象：Webサーバー】
 
 **目的：** dnfからNginxをインストールし，起動・自動起動を有効にする
 
@@ -170,7 +224,7 @@ systemctl is-enabled nginx.service
 
 ------------------------------
 
-### Step 3：プロキシ設定ファイルの作成【実施対象：Webサーバー】
+### Step 4：プロキシ設定ファイルの作成【実施対象：Webサーバー】
 
 **目的：** APサーバーへリクエストを転送するため，Nginxのプロキシ設定ファイルを新規作成する
 
@@ -184,9 +238,10 @@ vi /etc/nginx/conf.d/proxy.conf
 設定ファイルの記述内容：
 
 ```nginx
-upstream knowledge_cluster {
+upstream ap_cluster {
     ip_hash;
-    server <APサーバーのFQDN>:8080;
+    server <APサーバー1のFQDN>:8080;
+    server <APサーバー2のFQDN>:8080;
 }
 
 server {
@@ -199,7 +254,7 @@ server {
     }
 
     location / {
-        proxy_pass http://knowledge_cluster;
+        proxy_pass http://ap_cluster;
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -213,7 +268,7 @@ server {
 
 ------------------------------
 
-### Step 4：Nginxメイン設定ファイルの編集【実施対象：Webサーバー】
+### Step 5：Nginxメイン設定ファイルの編集【実施対象：Webサーバー】
 
 **目的：** デフォルトのserverブロックをコメントアウトし，`conf.d/proxy.conf`側のserverブロックと重複しないようにする
 
@@ -255,7 +310,7 @@ vi /etc/nginx/nginx.conf
 
 ------------------------------
 
-### Step 5：構文チェックと反映【実施対象：Webサーバー】
+### Step 6：構文チェックと反映【実施対象：Webサーバー】
 
 **目的：** Nginx設定の文法エラーを確認し，設定を反映する
 
@@ -513,14 +568,14 @@ ls -ld /etc/nginx /var/log/nginx 2>/dev/null
 rm -rf /etc/nginx /var/log/nginx
 ```
 
-### 8-6. systemd-resolvedのDNS設定削除（同居サーバーの場合）【実施対象：Webサーバー】
-
-> **注意：** 本手順書で `system-setup` を実施し，他サーバーと同居していない場合のみ実施．他のサービス（Tomcat等）と同居している場合はスキップ．
+### 8-6. systemd-resolvedのDNS設定削除【実施対象：Webサーバー】
 
 ```bash
-ls /etc/systemd/resolved.conf.d/wp-local.conf 2>/dev/null && rm -f /etc/systemd/resolved.conf.d/wp-local.conf
+ls /etc/systemd/resolved.conf.d/ex-local.conf 2>/dev/null && rm -f /etc/systemd/resolved.conf.d/ex-local.conf
 systemctl restart systemd-resolved
 ```
+
+> **重要：** 内部DNS停止状態で `systemd-resolved` が内部DNSを指したままだと，本サーバーの名前解決が失敗する．本Stepでデフォルトの解決経路に戻すこと．
 
 ### 8-7. ホスト名・タイムゾーンの復元（任意）【実施対象：Webサーバー】
 

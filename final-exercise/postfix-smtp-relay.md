@@ -9,7 +9,7 @@
 | 手順書名 | Postfixを用いたSMTPリレーサーバー構築 |
 | 作成日 | 2026-06-18 |
 | 最終更新日 | 2026-06-18 |
-| バージョン | v1.0 |
+| バージョン | v1.1 |
 | 対象環境 | AWS（Amazon Linux 2023） |
 
 > **改訂履歴**
@@ -17,6 +17,7 @@
 > | バージョン | 日付 | 変更内容 |
 > |-----------|------|---------|
 > | v1.0 | 2026-06-18 | 初版作成（テンプレートに沿って再構成．構成図追加．プレースホルダーを意味ベースに統一．パラメータ定義表を統合．SG設定セクションを強化．各Stepに【実施対象】明示．句読点を「，．」に統一．サーバー表記を「サーバー」に統一．メール送信テスト追加．付録A〜D追加．） |
+> | v1.1 | 2026-06-20 | DNS関連プレースホルダーを `nsd-private-redundancy.md` と統一．`<プライマリDNSのIP>` → `<Primary DNSのIP>`，`<セカンダリDNSのIP>` → `<Secondary DNSのIP>` に変更（パラメータ表・Step 1）． |
 
 ------------------------------
 
@@ -35,19 +36,19 @@
        ▲
        │ SMTP（25 / 587）
        │
-┌──────┴───────────────── VPC ─────────────────────────────┐
-│                                                          │
-│  [EC2: SMTPリレーサーバー（AZ1）]   [EC2: SMTPリレーサーバー（AZ3）]│
-│    └─ Postfix（25番）              └─ Postfix（25番）       │
-│         ▲                                ▲                │
-│         │ SMTP（25）                      │ SMTP（25）      │
-│         │                                │                │
-│  [EC2: APサーバー]──────────────────────┘                  │
-│    （Tomcat等のアプリ）                                     │
-│                                                          │
-│  [systemd-resolved → 内部DNS（Primary/Secondary）]         │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
+┌──────┴───────────────── VPC ──────────────────────────────────────┐
+│                                                                   │
+│  [EC2: SMTPリレーサーバー（AZ1）]   [EC2: SMTPリレーサーバー（AZ3）] │
+│    └─ Postfix（25番）              └─ Postfix（25番）              │
+│         ▲                                  ▲                      │
+│         │ SMTP（25）                       │ SMTP（25）            │
+│         │                                 │                       │
+│  [EC2: APサーバー]─────────────────────────┘                       │
+│    （Tomcat等のアプリ）                                            │
+│                                                                   │
+│  [systemd-resolved → 内部DNS（Primary/Secondary）]                 │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ### 2-3. 完成イメージ（ゴール定義）
@@ -105,8 +106,8 @@
 | パラメータ名 | 値 | 説明 |
 |------------|---|------|
 | `<SMTPリレーサーバーのホスト名>` | `<記入する>` | このサーバーのホスト名（例：`<任意の名前>-smtp`） |
-| `<プライマリDNSのIP>` | `<記入する>` | 内部DNSプライマリ（AZ2のAPサーバー）のIP |
-| `<セカンダリDNSのIP>` | `<記入する>` | 内部DNSセカンダリ（AZ4のAPサーバー）のIP |
+| `<Primary DNSのIP>` | `<記入する>` | 内部DNSプライマリ（AZ2のAPサーバー）のIP |
+| `<Secondary DNSのIP>` | `<記入する>` | 内部DNSセカンダリ（AZ4のAPサーバー）のIP |
 
 #### Postfix設定用
 
@@ -114,8 +115,8 @@
 |------------|---|------|
 | `<SMTPリレーサーバーのプライベートIP>` | `<記入する>` | このサーバーのプライベートIP（`ip addr show` で確認） |
 | `<許可するネットワーク>` | 例：`10.0.0.0/16` | リレーを許可するネットワーク（VPC CIDR） |
-| `<Postfix myhostname>` | 例：`hr-dash.tech` | Postfixの`myhostname`値（自分の名乗るホスト名） |
-| `<Postfix mydomain>` | 例：`hr-dash.tech` | Postfixの`mydomain`値 |
+| `<Postfix myhostname>` | `<記入する>` | Postfixの`myhostname`値（自分の名乗るホスト名） |
+| `<Postfix mydomain>` | `<記入する>` | Postfixの`mydomain`値 |
 
 #### ロールバック用（任意）
 
@@ -175,14 +176,14 @@ dnf install -y nmap-ncat
 mkdir -p /etc/systemd/resolved.conf.d
 
 # 内部DNSを参照する設定ファイルを作成
-vi /etc/systemd/resolved.conf.d/wp-local.conf
+vi /etc/systemd/resolved.conf.d/ex-local.conf
 ```
 
 設定ファイルの記述内容：
 
 ```
 [Resolve]
-DNS=<プライマリDNSのIP> <セカンダリDNSのIP>
+DNS=<Primary DNSのIP> <Secondary DNSのIP>
 ```
 
 ```bash
@@ -599,7 +600,7 @@ rm -rf /etc/postfix /var/spool/postfix
 ### 8-5. systemd-resolvedのDNS設定削除【実施対象：SMTPリレーサーバー】
 
 ```bash
-rm -f /etc/systemd/resolved.conf.d/wp-local.conf
+rm -f /etc/systemd/resolved.conf.d/ex-local.conf
 systemctl restart systemd-resolved
 ```
 

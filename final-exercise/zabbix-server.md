@@ -9,7 +9,7 @@
 | 手順書名 | Zabbix 7.0 サーバー構築 |
 | 作成日 | 2026-06-18 |
 | 最終更新日 | 2026-06-18 |
-| バージョン | v1.0 |
+| バージョン | v1.1 |
 | 対象環境 | AWS（Amazon Linux 2023） |
 
 > **改訂履歴**
@@ -17,6 +17,7 @@
 > | バージョン | 日付 | 変更内容 |
 > |-----------|------|---------|
 > | v1.0 | 2026-06-18 | 初版作成（テンプレートに沿って再構成．構成図追加．プレースホルダーを意味ベース日本語に統一．`zabbix-db-postgresql.md`と命名を整合．パラメータ定義表を整理．SG設定セクションを追加．ロールバック手順を新設．各Stepに【実施対象】明示．句読点を「，．」に統一．「Zabbixサーバー」（長音記号あり）に統一．`systemctl enable --now`に統一．付録A〜D追加．） |
+> | v1.1 | 2026-06-20 | 内部DNS（`nsd-private-redundancy.md`）の名前解決設定漏れに対応．Step 1を「タイムゾーン設定」から「システム設定（タイムゾーン・ホスト名・名前解決）」に拡張．パラメータ表に `<Zabbixサーバーのホスト名>` `<Primary DNSのIP>` `<Secondary DNSのIP>` 追加．ロールバック手順8-6「systemd-resolvedのDNS設定削除」を追加し，旧8-6〜8-8を8-7〜8-9に繰り上げ． |
 
 ------------------------------
 
@@ -39,23 +40,23 @@
        │
        │
 ┌──────┼─────────────── VPC ─────────────────────────────────┐
-│      │                                                    │
-│      ▼                                                    │
-│  [EC2: Zabbixサーバー（Private）]                            │
-│      ├─ zabbix-server-pgsql（10051番ポート）                 │
-│      ├─ httpd / php-fpm（80番ポート → Web GUI）              │
-│      └─ zabbix-agent2（10050番ポート → 自身を監視）           │
+│      │                                                     │
+│      ▼                                                     │
+│  [EC2: Zabbixサーバー（Private）]                           │
+│      ├─ zabbix-server-pgsql（10051番ポート）                │
+│      ├─ httpd / php-fpm（80番ポート → Web GUI）             │
+│      └─ zabbix-agent2（10050番ポート → 自身を監視）          │
 │             │                                              │
-│             │ TCP/5432（md5認証）                            │
+│             │ TCP/5432（md5認証）                           │
 │             ▼                                              │
-│  [EC2: DBサーバー]                                           │
-│      └─ PostgreSQL（<Zabbix用DB名>）                         │
+│  [EC2: DBサーバー]                                          │
+│      └─ PostgreSQL（<Zabbix用DB名>）                        │
 │                                                            │
 │                                                            │
-│  [各監視対象サーバー]──────────────10050/10051─────────────┐    │
-│      └─ zabbix-agent2                                  │    │
-│                                                        ▼    │
-│                                          (Zabbixサーバーへ)  │
+│  [各監視対象サーバー]──────────────10050/10051───────────┐   │
+│      └─ zabbix-agent2                                  │   │
+│                                                        ▼   │
+│                                          (Zabbixサーバーへ) │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -118,6 +119,9 @@
 | `<Zabbix用DBユーザー名>` | `<記入する>` | Zabbix用のDBユーザー名 |
 | `<DBパスワード>` | パスワード管理ツール参照 | DBユーザー用パスワード（本書には記載しない） |
 | `<ZabbixサーバーのプライベートIP>` | `<記入する>` | ZabbixサーバーのプライベートIP |
+| `<Zabbixサーバーのホスト名>` | `<記入する>` | Zabbixサーバーのホスト名（例：`zabbix-server-1`） |
+| `<Primary DNSのIP>` | `<記入する>` | 内部DNSプライマリ（AZ2のAPサーバー）のIP |
+| `<Secondary DNSのIP>` | `<記入する>` | 内部DNSセカンダリ（AZ4のAPサーバー）のIP |
 | `<踏み台サーバーのパブリックIP>` | `<記入する>` | 踏み台サーバーのパブリックIP（GUIアクセス用） |
 | `<SSH鍵パス>` | `<記入する>` | ローカルPCのSSH秘密鍵パス（例：`~/.ssh/id_rsa`） |
 
@@ -162,7 +166,7 @@ sudo su -
 dnf update -y
 
 # PostgreSQL 15 クライアントインストール
-dnf install -y postgresql15
+dnf install -y postgresql15-server
 
 # バージョン確認
 psql --version
@@ -218,18 +222,60 @@ psql -h <DBサーバーのIP> -U <Zabbix用DBユーザー名> -d <Zabbix用DB名
 
 ------------------------------
 
-### Step 1：タイムゾーン設定【実施対象：Zabbixサーバー】
+### Step 1：システム設定（タイムゾーン・ホスト名・名前解決）【実施対象：Zabbixサーバー】
 
-**目的：** システムのタイムゾーンを `Asia/Tokyo` に設定する
+**目的：** タイムゾーン，ホスト名，内部DNSの名前解決先を設定する
 
 #### 操作手順
 
 ```bash
+# rootユーザーにスイッチ
+sudo su -
+
+# パッケージを最新化
+dnf update -y
+
+# タイムゾーンを Asia/Tokyo に設定
 timedatectl set-timezone Asia/Tokyo
 timedatectl status
+
+# ホスト名を設定
+hostnamectl set-hostname <Zabbixサーバーのホスト名>
+
+# 通信確認ツール（nc）の存在確認
+command -v nc
+# → 何も表示されなければ未インストール
+
+# nc が未インストールの場合のみ実行
+dnf install -y nmap-ncat
+
+# systemd-resolved 設定用ディレクトリ作成
+mkdir -p /etc/systemd/resolved.conf.d
+
+# 内部DNSを参照する設定ファイルを作成
+vi /etc/systemd/resolved.conf.d/ex-local.conf
 ```
 
-> **期待する結果：** `Time zone: Asia/Tokyo (JST, +0900)` が表示される．
+設定ファイルの記述内容：
+
+```
+[Resolve]
+DNS=<Primary DNSのIP> <Secondary DNSのIP>
+```
+
+```bash
+# systemd-resolved を再起動
+systemctl restart systemd-resolved
+
+# 名前解決確認
+resolvectl status | grep -A 2 "Current DNS"
+```
+
+> **期待する結果：** `Time zone: Asia/Tokyo (JST, +0900)` および `Current DNS Server: <Primary DNSのIP>` が表示される．
+
+> **注意：** ホスト名をシェルのプロンプトに反映させるため，作業途中で一度SSHを切断して再接続すること．
+
+> **注意：** 本ステップは `nsd-private-redundancy.md` で内部DNSが構築されていることが前提．未構築の場合は名前解決確認はスキップして次のStepに進む．
 
 ------------------------------
 
@@ -717,13 +763,22 @@ rpm -e zabbix-release
 
 DB側のロールバックは別手順書（`zabbix-db-postgresql.md` の 8章）を参照．
 
-### 8-6. 接続テスト用設定の削除【実施対象：Zabbixサーバー】
+### 8-6. systemd-resolvedのDNS設定削除【実施対象：Zabbixサーバー】
+
+```bash
+rm -f /etc/systemd/resolved.conf.d/ex-local.conf
+systemctl restart systemd-resolved
+```
+
+> **重要：** 内部DNS停止状態で `systemd-resolved` が内部DNSを指したままだと，本サーバーの名前解決が失敗する．本Stepでデフォルトの解決経路に戻すこと．
+
+### 8-7. 接続テスト用設定の削除【実施対象：Zabbixサーバー】
 
 ```bash
 rm -f ~/.pgpass
 ```
 
-### 8-7. 完全リカバリ：AMIスナップショットからの復元【実施対象：Zabbixサーバー】
+### 8-8. 完全リカバリ：AMIスナップショットからの復元【実施対象：Zabbixサーバー】
 
 ```
 AWS コンソール → EC2 → AMI → <作業前AMI名> を選択
@@ -731,7 +786,7 @@ AWS コンソール → EC2 → AMI → <作業前AMI名> を選択
 → 既存サーバーを停止／削除し，新インスタンスに切替
 ```
 
-### 8-8. 完了確認【実施対象：Zabbixサーバー】
+### 8-9. 完了確認【実施対象：Zabbixサーバー】
 
 ```bash
 systemctl status zabbix-server 2>&1 | head -3
