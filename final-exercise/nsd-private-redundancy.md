@@ -9,7 +9,7 @@
 | 手順書名 | NSDを用いた内部DNS冗長構成構築 |
 | 作成日 | 2026-06-18 |
 | 最終更新日 | 2026-06-18 |
-| バージョン | v1.0 |
+| バージョン | v1.2 |
 | 対象環境 | AWS（Amazon Linux 2023） |
 
 > **改訂履歴**
@@ -18,6 +18,7 @@
 > |-----------|------|---------|
 > | v1.0 | 2026-06-18 | 初版作成（テンプレートに沿って再構成．構成図（AXFRフロー含む）追加．Primary側・Secondary側を4-A／4-Bに整理．各Stepに【実施対象】明示．パラメータ定義表を統合．プレースホルダーを意味ベースに統一．句読点を「，．」に統一．サーバー表記を「サーバー」に統一．付録A〜D追加．） |
 > | v1.1 | 2026-06-18 | ファイル名を`nsd-internal-redundancy.md`から`nsd-private-redundancy.md`に変更（対外公開DNSの手順書`nsd-public-letsencrypt.md`と命名を対比させるため）．手順書のタイトル・本文中の「内部DNS」という技術用語は業界慣用表現として維持． |
+> | v1.2 | 2026-06-20 | 構築・検証中はキャッシュ保持時間を短くする目的で，Primaryゾーンファイルの `$TTL` と SOAの `refresh` / `retry` / `minimum` を **3600 → 60** に変更．`expire` のみ RFC 1035の SOA 設計原則（`expire > refresh`）に従い **3600** を維持．動作確認完了後の本番運用向け推奨値（`$TTL=3600` / `refresh=3600` / `retry=900` / `expire=604800` / `minimum=300`）を本文 Primary Step 5 および付録Bに併記． |
 
 ------------------------------
 
@@ -332,13 +333,13 @@ vi /etc/nsd/wp.local.zone
 設定ファイルの記述内容：
 
 ```
-$TTL 3600
+$TTL 60
 @ IN SOA ns1.wp.local. <SOA管理者メール> (
         <ゾーンシリアル番号> ; serial
-        3600                ; refresh
-        3600                ; retry
+        60                  ; refresh
+        60                  ; retry
         3600                ; expire
-        3600 )              ; minimum
+        60 )                ; minimum
 
         IN NS ns1.wp.local.
         IN NS ns2.wp.local.
@@ -366,6 +367,20 @@ az4-dns    IN A <AZ4のAP系IP>
 
 az4-zabbix IN A <AZ4のZabbix IP>
 ```
+
+> **注意（TTLについて）：** 本設定の `$TTL` および SOA の `refresh` / `retry` / `minimum` は **構築・検証中の暫定値（60秒）** である．キャッシュ保持時間を短くしてレコード変更の反映を早めるため．動作確認完了後は **本番運用向けの推奨値** に変更すること．
+>
+> | フィールド | 構築・検証中（暫定） | 動作確認完了後（推奨） |
+> |---|---|---|
+> | `$TTL` | 60 | 3600（1時間） |
+> | `refresh` | 60 | 3600（1時間） |
+> | `retry` | 60 | 900（15分） |
+> | `expire` | 3600 | 604800（1週間） |
+> | `minimum` | 60 | 300（5分） |
+>
+> `expire` のみ検証中も `3600` にしている理由：`expire ≤ refresh` の状態だと Primary が1分でも応答しないと Secondary がゾーンを破棄してしまうため．RFC 1035の SOA 設計原則に従い `expire > refresh` を維持する．
+>
+> 値変更時は `<ゾーンシリアル番号>` を必ずインクリメントし，`systemctl reload nsd` で反映すること．
 
 > **注意：** IP値が未確定のレコードは，行頭に `;` を付けてコメントアウトすること（例：`;az1-web    IN A`）．後から追加可能．
 >
@@ -942,14 +957,16 @@ pattern:
 **`/etc/nsd/wp.local.zone`（Primaryのみ作成）**
 
 ```
-$TTL 3600
+$TTL 60
 @ IN SOA ns1.wp.local. <SOA管理者メール> (
         <ゾーンシリアル番号> ; serial
-        3600                ; refresh
-        3600                ; retry
+        60                  ; refresh
+        60                  ; retry
         3600                ; expire
-        3600 )              ; minimum
+        60 )                ; minimum
 ```
+
+> **補足：** 上記は **構築・検証中の暫定値**．動作確認完了後は本番運用向けの推奨値（`$TTL=3600` / `refresh=3600` / `retry=900` / `expire=604800` / `minimum=300`）に変更すること．詳細は本文 Primary Step 5 の注意ブロックを参照．
 
 - `$TTL`：レコードのデフォルトTTL（秒）．キャッシュ保持時間．
 - `@`：ゾーン名のショートカット（ここでは `wp.local`）．
