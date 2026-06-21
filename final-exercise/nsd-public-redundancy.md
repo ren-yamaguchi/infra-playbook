@@ -9,16 +9,17 @@
 | 手順書名 | 外部公開DNS（NSD 2台冗長構成）+ Let's Encrypt 証明書取得 構築手順書 |
 | 作成日 | 2026-06-18 |
 | 最終更新日 | 2026-06-20 |
-| バージョン | v2.0 |
+| バージョン | v2.1 |
 | 対象環境 | AWS（Amazon Linux 2023 / NSD / certbot） |
 
-> **改訂履歴**
+> **改訂履歴**v
 >
 > | バージョン | 日付 | 変更内容 |
 > |-----------|------|---------|
 > | v1.0 | 2026-06-18 | 初版作成（旧 `nsd-public-letsencrypt.md` として作成．元`ACM-ALB構築手順書.md`を機能分割して再構成．本手順書はNSDによる外部DNS構築とLet's Encrypt証明書取得までを範囲とする．） |
 > | v1.1 | 2026-06-20 | 用語「対外」→「外部」に統一．certbotインストール方法を `pip3 install` から `dnf install -y certbot`（AL2023標準リポジトリ）に変更．親ドメインゾーン管理は上長（Route53）担当の方針に基づき，親ドメインゾーンファイル作成を削除．サブドメインのみを管理する構成に改訂．SOA値を構築・検証用の暫定値に変更（本番値併記）． |
 > | v2.0 | 2026-06-20 | 外部DNSを **2台冗長構成**（Primary/Secondary）に大規模再構成．ファイル名を `nsd-public-letsencrypt.md` → `nsd-public-redundancy.md` に変更（`nsd-private-redundancy.md` と命名統一）．構成図・SG・パラメータ表・Step群を Primary 側／Secondary 側に分割．Primaryに `provide-xfr`／`notify` 設定，Secondaryに `request-xfr`／`allow-notify` 設定を追加．ゾーンファイルのNSレコード／Aレコードを ns1（Primary）／ns2（Secondary）に対応．Route53委譲申請内容を NS 2件＋A 2件に変更．Let's Encrypt証明書取得は Primary 側のみで実施（ゾーン同期により `_acme-challenge` TXTがSecondaryに自動伝播）．動作確認・ロールバック・付録もすべて2台構成に追従． |
+> | v2.1 | 2026-06-21 | ゾーン転送（AXFR）・NOTIFY のIP指定を **EIP → プライベートIP** に変更．VPC内通信で完結させ，EIP NAT loopback の不確実性・データ転送料・経路長を回避．対象：Step 2-A の `provide-xfr` / `notify`，Step 2-B の `request-xfr` / `allow-notify`，SG 3-2-3 / 3-2-4 の Primary IP参照，Step 4-B-4 ／エラー① のトラブルシュート `dig AXFR` コマンド，付録B Primary／Secondary 設定例，付録D-6 同居例．インターネット公開向け（NSレコード `ns1 A` / `ns2 A`，Route53委譲申請，外部疎通確認 `dig`，SSH接続）は **EIPのまま維持**．構成図のAXFR/NOTIFYフローに「プライベートIP経由（VPC内）」のラベルを追加．付録D-8「なぜゾーン転送はプライベートIP，インターネット公開はEIPか」を新規追加し，使い分けの根拠を解説． |
 
 ------------------------------
 
@@ -65,18 +66,18 @@
 │  │  ├─ EIP (Primary)        │    │  ├─ EIP (Secondary)      │  │
 │  │  ├─ UDP/TCP 53           │    │  ├─ UDP/TCP 53           │  │
 │  │  ├─ provide-xfr          │◀───┼──┤ request-xfr           │  │
-│  │  ├─ notify   ────────────┼────┼─▶│ allow-notify          │  │
-│  │  └─ ゾーンファイル(主)     │    │  └─ ゾーンファイル(副)    │  │
-│  │    └─<取得するサブドメイン>│    │     └─ AXFR同期          │  │
-│  │         ├─ NS ns1        │    │                          │  │
-│  │         ├─ NS ns2        │    │                          │  │
+│  │  ├─ notify               │────┼─▶│ allow-notify          │  │
+│  │  └─ ゾーンファイル(マスター)│   │  └─ ゾーンファイル(複製)   │  │
+│  │    └─ <取得するサブドメイン>│   │     └─ AXFR同期          │  │
+│  │         ├─ NS ns1       │     │                          │  │
+│  │         ├─ NS ns2       │     │                          │  │
 │  │         ├─ ns1 A (Primary EIP)│                          │  │
 │  │         ├─ ns2 A (Secondary EIP)│                        │  │
 │  │         └─ _acme-challenge TXT (certbot追記)             │  │
 │  │                          │    │                          │  │
-│  │ ※ certbot は Primary のみ│    │                          │  │
+│  │※ certbot は Primary のみ │    │                          │  │
 │  └──────────────────────────┘    └──────────────────────────┘  │
-│                                                                │
+│ ※ AXFR / NOTIFY はプライベートIP経由（VPC内）                   │
 │  /etc/letsencrypt/live/<取得するサブドメイン>/ (Primaryに保存)   │
 │       ├─ cert.pem                                              │
 │       ├─ privkey.pem                                           │
@@ -145,7 +146,7 @@
 |-------|------------|----------|--------|------|
 | HTTPS | TCP | 443 | 0.0.0.0/0 | dnf／Let's Encrypt ACME通信 |
 | HTTP | TCP | 80 | 0.0.0.0/0 | dnfミラー |
-| DNS (UDP) | UDP | 53 | 0.0.0.0/0 | NOTIFY送信（SecondaryへのEIPまたはVPC内IP） |
+| DNS (UDP) | UDP | 53 | 0.0.0.0/0 | NOTIFY送信（SecondaryへのVPC内IP宛て） |
 | DNS (TCP) | TCP | 53 | 0.0.0.0/0 | AXFR応答 |
 
 #### 3-2-3. Secondary NSDサーバーのインバウンドルール
@@ -155,7 +156,7 @@
 | SSH | TCP | 22 | マイIP（踏み台経由） | 構築作業用 |
 | DNS (UDP) | UDP | 53 | 0.0.0.0/0 | インターネットからのDNS問い合わせ受信 |
 | DNS (TCP) | TCP | 53 | 0.0.0.0/0 | EDNS非対応や大型応答用 |
-| DNS (UDP) | UDP | 53 | `<Primary EIP>/32` | PrimaryからのNOTIFY受信（再掲；全許可で吸収される） |
+| DNS (UDP) | UDP | 53 | `<Primary プライベートIP>/32` | PrimaryからのNOTIFY受信（再掲；全許可で吸収される） |
 
 #### 3-2-4. Secondary NSDサーバーのアウトバウンドルール
 
@@ -337,7 +338,7 @@ server:
 ```
 
 > **補足：**
-> - `provide-xfr` で指定するIPは Secondary の **プライベートIP**．Public subnet 同士の通信は EIP を使う方が経路が明確．
+> - `provide-xfr` で指定するIPは Secondary の **プライベートIP**．VPC内通信で完結させる（理由は付録D-8参照）．
 > - `NOKEY` はTSIG認証を使わない設定．本手順書では簡素化のためTSIGなしで構成する．本番強化時はTSIGの導入を検討．
 
 ------------------------------
@@ -360,10 +361,10 @@ zone:
     zonefile: "<取得するサブドメイン>.zone"
 
     # Primary に AXFR 要求を出す
-    request-xfr: AXFR <Primary NSDサーバーのEIP> NOKEY
+    request-xfr: AXFR <Primary NSDサーバーのプライベートIP> NOKEY
 
     # Primary からの NOTIFY 受信を許可
-    allow-notify: <Primary NSDサーバーのEIP> NOKEY
+    allow-notify: <Primary NSDサーバーのプライベートIP> NOKEY
 ```
 
 新規インストールの場合は，`server:` セクションを以下のように設定し，併せて上記zoneを追記する：
@@ -543,15 +544,15 @@ nsd-control zonestatus <取得するサブドメイン>
 tail -n 50 /var/log/nsd.log
 journalctl -u nsd -n 50 --no-pager
 
-# 手動で AXFR 要求送信テスト
-dig @<Primary NSDサーバーのEIP> AXFR <取得するサブドメイン>
+# 手動で AXFR 要求送信テスト（本番経路と一致させるためプライベートIPで実行）
+dig @<Primary NSDサーバーのプライベートIP> AXFR <取得するサブドメイン>
 ```
 
 > **チェック項目：**
-> - Primary側 `provide-xfr` のIPが Secondary EIP と一致しているか
-> - Secondary側 `request-xfr` のIPが Primary EIP と一致しているか
-> - PrimaryのSGで TCP/53 が Secondary EIPからのインバウンドを許可しているか
-> - PrimaryのEIPがStep 2-Bで設定したIPと一致しているか
+> - Primary側 `provide-xfr` のIPが Secondary プライベートIP と一致しているか
+> - Secondary側 `request-xfr` のIPが Primary プライベートIP と一致しているか
+> - PrimaryのSGで TCP/53 が Secondary プライベートIP からのインバウンドを許可しているか
+> - PrimaryのプライベートIPがStep 2-Bで設定したIPと一致しているか
 
 ------------------------------
 
@@ -858,8 +859,8 @@ openssl x509 -in /etc/letsencrypt/live/<取得するサブドメイン>/cert.pem
 **対処法：**
 
 ```bash
-# Secondary 側で手動 AXFR 試行
-dig @<Primary NSDサーバーのEIP> AXFR <取得するサブドメイン>
+# Secondary 側で手動 AXFR 試行（本番経路と一致させるためプライベートIPで実行）
+dig @<Primary NSDサーバーのプライベートIP> AXFR <取得するサブドメイン>
 
 # NSDログ確認
 tail -n 50 /var/log/nsd.log
@@ -868,7 +869,7 @@ tail -n 50 /var/log/nsd.log
 nsd-control transfer <取得するサブドメイン>
 ```
 
-> **チェックポイント：** Primary の `nsd.conf` で `provide-xfr: <Secondary EIP>` の `<Secondary EIP>` が，Secondary EC2 の実際のEIPと一致しているか．
+> **チェックポイント：** Primary の `nsd.conf` で `provide-xfr: <Secondary プライベートIP>` の `<Secondary プライベートIP>` が，Secondary EC2 の実際のプライベートIPと一致しているか．
 
 ------------------------------
 
@@ -1097,8 +1098,8 @@ dig @127.0.0.1 ns1.<取得するサブドメイン> A +short
 zone:
     name: "<取得するサブドメイン>"
     zonefile: "<取得するサブドメイン>.zone"
-    provide-xfr: <Secondary NSDサーバーのEIP> NOKEY
-    notify: <Secondary NSDサーバーのEIP> NOKEY
+    provide-xfr: <Secondary NSDサーバーのプライベートIP> NOKEY
+    notify: <Secondary NSDサーバーのプライベートIP> NOKEY
 ```
 
 | 項目 | 説明 |
@@ -1114,8 +1115,8 @@ zone:
 zone:
     name: "<取得するサブドメイン>"
     zonefile: "<取得するサブドメイン>.zone"
-    request-xfr: AXFR <Primary NSDサーバーのEIP> NOKEY
-    allow-notify: <Primary NSDサーバーのEIP> NOKEY
+    request-xfr: AXFR <Primary NSDサーバーのプライベートIP> NOKEY
+    allow-notify: <Primary NSDサーバーのプライベートIP> NOKEY
 ```
 
 | 項目 | 説明 |
@@ -1214,8 +1215,8 @@ zone:
 zone:
     name: "<取得するサブドメイン>"     ← 本手順書で追加
     zonefile: "<取得するサブドメイン>.zone"
-    provide-xfr: <外部DNS Secondary EIP> NOKEY
-    notify: <外部DNS Secondary EIP> NOKEY
+    provide-xfr: <外部DNS Secondary プライベートIP> NOKEY
+    notify: <外部DNS Secondary プライベートIP> NOKEY
 ```
 
 - SGの内部DNS問い合わせ（VPC CIDR）と外部DNS問い合わせ（0.0.0.0/0）は別々に許可する
@@ -1233,3 +1234,45 @@ zone:
 | Let's Encrypt 連携 | なし | あり |
 | ファイル名の対比 | `private` | `public` |
 | 命名規則 | `redundancy` で揃える | `redundancy` で揃える |
+
+#### D-8. なぜゾーン転送はプライベートIP，インターネット公開はEIPか
+
+外部DNSは Public subnet に配置されEIPを持つが，それでも **ゾーン転送（AXFR）と NOTIFY はプライベートIPで実装** する設計を採用している．使い分けの理由を以下に整理する．
+
+##### 用途別の使い分け
+
+| 用途 | 使うIP | 理由 |
+|---|---|---|
+| インターネット向けの NSレコード（`ns1 A` `ns2 A`） | **EIP** | 世界中のリゾルバが到達できる固定IPが必要 |
+| Route53へのNS委譲申請 | **EIP** | 同上．Route53も親ゾーンも外部から見える |
+| 動作確認の `dig` コマンド（外部疎通） | **EIP** | 外部から本当に名前解決できるかの確認 |
+| Primary ⇄ Secondary のAXFR/NOTIFY | **プライベートIP** | VPC内で完結．後述の3つの利点 |
+
+##### プライベートIPで実装する3つの利点
+
+**利点1：通信経路が VPC 内で完結する**
+
+EIPを宛先にした場合，Public subnet 内のEC2 同士の通信でも：
+- VPC内ルーティングテーブルでEIPは「VPC CIDR外」と判定される
+- Internet Gateway 経由で外に出る → 折り返して入る（**EIP NAT loopback**）
+- AWSではサポートされているが，経路が長く障害ポイントも増える
+
+プライベートIPなら **VPC内で完結** し，経路は明確かつ短い．
+
+**利点2：データ転送料の最適化**
+
+| 経路 | 課金 |
+|---|---|
+| プライベートIP同士（同一AZ） | 無料 |
+| プライベートIP同士（クロスAZ） | $0.01/GB |
+| **EIP経由（IGW往復）** | **$0.01〜0.02/GB ＋ EIP関連料金** |
+
+ゾーン転送のトラフィックは少量だが，検証フェーズで頻繁にリロードする場合は無視できなくなる．
+
+**利点3：AWSのベストプラクティスに整合**
+
+AWS公式ドキュメントでも「**同一VPC内のEC2間通信はプライベートIPで行うべき**」と明記されている．EIP経由通信は「外部からの接続を受け付ける」目的に限定するのが推奨設計．
+
+##### TL;DR
+
+> **インターネット公開（NSレコード・dig確認）には EIP，VPC内通信（AXFR・NOTIFY）にはプライベートIP** を使う．EIPはあくまで「世界中から到達するための公開アドレス」であり，VPC内の隣接EC2との通信に使うべきではない．
