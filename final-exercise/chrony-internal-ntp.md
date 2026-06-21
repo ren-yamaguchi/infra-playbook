@@ -9,7 +9,7 @@
 | 手順書名 | chronyを用いた内部NTPサーバー構築 |
 | 作成日 | 2026-06-01 |
 | 最終更新日 | 2026-06-18 |
-| バージョン | v1.4 |
+| バージョン | v1.5 |
 | 対象環境 | AWS（Amazon Linux 2023） |
 
 > **改訂履歴**
@@ -21,6 +21,7 @@
 > | v1.2 | 2026-06-03 | 構成図をもとに全体を修正．NTPサーバー・クライアント対象の明記・プレースホルダー化・firewalld確認追加・enable順序修正・同期待ち補足追加・確認作業の進め方追加・証跡保存先明記． |
 > | v1.3 | 2026-06-18 | テンプレートに沿って再構成．7章+ロールバック+付録A〜Dの構成に変更．句読点を「，．」に統一．`systemctl enable --now` に統一．各Stepに【実施対象】明示．構成図にAZ配置・クライアント5台を明示．付録A〜D追加． |
 > | v1.4 | 2026-06-20 | 内部DNS（`nsd-private-redundancy.md`）の名前解決設定漏れに対応．新Step 1「システム設定（タイムゾーン・ホスト名・名前解決）」を追加し，後続Step 1〜18を Step 2〜19に繰り上げ．パラメータ表に `<対象サーバーのホスト名>` `<Primary DNSのIP>` `<Secondary DNSのIP>` 追加．ロールバック手順に「systemd-resolvedのDNS設定削除」を追加（8-3）し，旧8-3を8-4に繰り上げ． |
+> | v1.5 | 2026-06-21 | ライブラリ全体の正準AZ配置との不整合を解消．NTPサーバーをAZ3 Private → **AZ2 Private（PostgreSQL／NFS同居）** に修正．対象サーバー一覧表を実構成（EC2 5台）に書き換え：Web系AZ1（Nginx／外部NSD Primary／Postfix同居），Web系AZ3（同冗長），AP系AZ2（Tomcat／内部NSD Primary同居），AP系AZ4（同冗長），Zabbix（AZ4 Private）．構成図のクライアント行のAZ表記とStep 12のクライアント列挙も同期修正． |
 
 ------------------------------
 
@@ -46,16 +47,17 @@
 ┌────────────────── VPC ────────┼───────────────────────────┐
 │                               │                           │
 │                    [EC2: NTPサーバー]                      │
-│                    AZ3 / Private subnet                   │
+│                    AZ2 / Private subnet                   │
 │                    <NTPサーバーのFQDN>                     │
+│                    PostgreSQL／NFS／NTP同居                │
 │                    chronyd (UDP/123)                      │
 │                    stratum 10 (上位切断時)                 │
 │                                ▲                          │
 │                                │ UDP 123                  │
 │        ┌───────────────────────┼───────────────────────┐  │
 │        │           │           │           │           │  │
-│      [Web]       [DNS]       [AP1]       [AP2]  [MONITOR] │
-│     AZ1 Pub     AZ2 Pub    AZ3 Priv   AZ4 Priv   AZ4 Priv │
+│   [Web系AZ1]  [Web系AZ3]  [AP系AZ2]   [AP系AZ4]  [Zabbix]  │
+│    AZ1 Pub    AZ3 Pub    AZ2 Priv   AZ4 Priv   AZ4 Priv   │
 │                        NTPクライアント × 5台               │
 │                                                           │
 └───────────────────────────────────────────────────────────┘
@@ -63,15 +65,15 @@
 
 **対象サーバー一覧**
 
-| サーバー名（例） | AZ | サブネット | NTPにおける役割 |
-|-----------|-----|----------|--------------|
-| `<NTPサーバーのFQDN>`（例：db.ex.local） | AZ3 | Private subnet | NTPサーバー |
-| `<Webサーバーのホスト名>`（例：web.ex.local） | AZ1 | Public subnet | NTPクライアント |
-| `<DNSサーバーのホスト名>`（例：dns.ex.local） | AZ2 | Public subnet | NTPクライアント |
-| `<AP1サーバーのホスト名>`（例：ap1.ex.local） | AZ3 | Private subnet | NTPクライアント |
-| `<AP2サーバーのホスト名>`（例：ap2.ex.local） | AZ4 | Private subnet | NTPクライアント |
-| `<Zabbixサーバーのホスト名>`（例：MONITOR） | AZ4 | Private subnet | NTPクライアント |
-| `<踏み台サーバーのホスト名>`（例：STEP） | AZ2 | Public subnet | 対象外 |
+| サーバー名（例） | AZ | サブネット | 同居サービス | NTPにおける役割 |
+|-----------|-----|----------|------------|--------------|
+| `<NTPサーバーのFQDN>`（例：db.ex.local） | AZ2 | Private subnet | PostgreSQL／NFS／NTP | NTPサーバー |
+| `<Web系AZ1サーバーのホスト名>`（例：web1.ex.local） | AZ1 | Public subnet | Nginx／外部NSD Primary／Postfix | NTPクライアント |
+| `<Web系AZ3サーバーのホスト名>`（例：web2.ex.local） | AZ3 | Public subnet | Nginx／外部NSD Secondary／Postfix | NTPクライアント |
+| `<AP系AZ2サーバーのホスト名>`（例：ap1.ex.local） | AZ2 | Private subnet | Tomcat（AP1）／内部NSD Primary | NTPクライアント |
+| `<AP系AZ4サーバーのホスト名>`（例：ap2.ex.local） | AZ4 | Private subnet | Tomcat（AP2）／内部NSD Secondary | NTPクライアント |
+| `<Zabbixサーバーのホスト名>`（例：MONITOR） | AZ4 | Private subnet | Zabbixサーバー | NTPクライアント |
+| `<踏み台サーバーのホスト名>`（例：STEP） | AZ1またはAZ3 | Public subnet | 踏み台 | 対象外 |
 
 ### 2-3. 完成イメージ（ゴール定義）
 
@@ -134,11 +136,11 @@ NTPサーバーEC2に以下のSGルールが設定済みであることをAWSコ
 
 | パラメータ名 | 値 | 説明 |
 |------------|---|------|
-| `<WebサーバーのプライベートIP>` | `<記入する>` | クライアント①（Web） |
-| `<DNSサーバーのプライベートIP>` | `<記入する>` | クライアント②（DNS） |
-| `<AP1サーバーのプライベートIP>` | `<記入する>` | クライアント③（AP1） |
-| `<AP2サーバーのプライベートIP>` | `<記入する>` | クライアント④（AP2） |
-| `<ZabbixサーバーのプライベートIP>` | `<記入する>` | クライアント⑤（MONITOR） |
+| `<Web系AZ1サーバーのプライベートIP>` | `<記入する>` | クライアント①（AZ1：Nginx／外部NSD Primary／Postfix同居） |
+| `<Web系AZ3サーバーのプライベートIP>` | `<記入する>` | クライアント②（AZ3：Nginx／外部NSD Secondary／Postfix同居） |
+| `<AP系AZ2サーバーのプライベートIP>` | `<記入する>` | クライアント③（AZ2：Tomcat／内部NSD Primary同居） |
+| `<AP系AZ4サーバーのプライベートIP>` | `<記入する>` | クライアント④（AZ4：Tomcat／内部NSD Secondary同居） |
+| `<ZabbixサーバーのプライベートIP>` | `<記入する>` | クライアント⑤（AZ4：Zabbixサーバー） |
 
 ### 3-4. 作業情報・エスカレーション先
 
@@ -459,10 +461,10 @@ chronyc sources -v
 
 以下の5台それぞれにSSHして実施する：
 
-- `<Webサーバーのホスト名>`（AZ1 Public subnet）
-- `<DNSサーバーのホスト名>`（AZ2 Public subnet）
-- `<AP1サーバーのホスト名>`（AZ3 Private subnet）
-- `<AP2サーバーのホスト名>`（AZ4 Private subnet）
+- `<Web系AZ1サーバーのホスト名>`（AZ1 Public subnet：Nginx／外部NSD Primary／Postfix同居）
+- `<Web系AZ3サーバーのホスト名>`（AZ3 Public subnet：Nginx／外部NSD Secondary／Postfix同居）
+- `<AP系AZ2サーバーのホスト名>`（AZ2 Private subnet：Tomcat／内部NSD Primary同居）
+- `<AP系AZ4サーバーのホスト名>`（AZ4 Private subnet：Tomcat／内部NSD Secondary同居）
 - `<Zabbixサーバーのホスト名>`（AZ4 Private subnet）
 
 ```bash
@@ -641,10 +643,10 @@ chronyc clients
 > ```
 > Hostname                      NTP   Drop Int IntL Last     Cmd   Drop Int  Last
 > ===============================================================================
-> <Webサーバーのホスト名>         x      0   x    -     x       0      0   -     -
-> <DNSサーバーのホスト名>         x      0   x    -     x       0      0   -     -
-> <AP1サーバーのホスト名>         x      0   x    -     x       0      0   -     -
-> <AP2サーバーのホスト名>         x      0   x    -     x       0      0   -     -
+> <Web系AZ1サーバーのホスト名>    x      0   x    -     x       0      0   -     -
+> <Web系AZ3サーバーのホスト名>    x      0   x    -     x       0      0   -     -
+> <AP系AZ2サーバーのホスト名>     x      0   x    -     x       0      0   -     -
+> <AP系AZ4サーバーのホスト名>     x      0   x    -     x       0      0   -     -
 > <Zabbixサーバーのホスト名>      x      0   x    -     x       0      0   -     -
 > ```
 >

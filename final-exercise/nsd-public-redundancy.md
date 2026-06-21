@@ -9,7 +9,7 @@
 | 手順書名 | 外部公開DNS（NSD 2台冗長構成）+ Let's Encrypt 証明書取得 構築手順書 |
 | 作成日 | 2026-06-18 |
 | 最終更新日 | 2026-06-20 |
-| バージョン | v2.1 |
+| バージョン | v2.2 |
 | 対象環境 | AWS（Amazon Linux 2023 / NSD / certbot） |
 
 > **改訂履歴**v
@@ -20,6 +20,7 @@
 > | v1.1 | 2026-06-20 | 用語「対外」→「外部」に統一．certbotインストール方法を `pip3 install` から `dnf install -y certbot`（AL2023標準リポジトリ）に変更．親ドメインゾーン管理は上長（Route53）担当の方針に基づき，親ドメインゾーンファイル作成を削除．サブドメインのみを管理する構成に改訂．SOA値を構築・検証用の暫定値に変更（本番値併記）． |
 > | v2.0 | 2026-06-20 | 外部DNSを **2台冗長構成**（Primary/Secondary）に大規模再構成．ファイル名を `nsd-public-letsencrypt.md` → `nsd-public-redundancy.md` に変更（`nsd-private-redundancy.md` と命名統一）．構成図・SG・パラメータ表・Step群を Primary 側／Secondary 側に分割．Primaryに `provide-xfr`／`notify` 設定，Secondaryに `request-xfr`／`allow-notify` 設定を追加．ゾーンファイルのNSレコード／Aレコードを ns1（Primary）／ns2（Secondary）に対応．Route53委譲申請内容を NS 2件＋A 2件に変更．Let's Encrypt証明書取得は Primary 側のみで実施（ゾーン同期により `_acme-challenge` TXTがSecondaryに自動伝播）．動作確認・ロールバック・付録もすべて2台構成に追従． |
 > | v2.1 | 2026-06-21 | ゾーン転送（AXFR）・NOTIFY のIP指定を **EIP → プライベートIP** に変更．VPC内通信で完結させ，EIP NAT loopback の不確実性・データ転送料・経路長を回避．対象：Step 2-A の `provide-xfr` / `notify`，Step 2-B の `request-xfr` / `allow-notify`，SG 3-2-3 / 3-2-4 の Primary IP参照，Step 4-B-4 ／エラー① のトラブルシュート `dig AXFR` コマンド，付録B Primary／Secondary 設定例，付録D-6 同居例．インターネット公開向け（NSレコード `ns1 A` / `ns2 A`，Route53委譲申請，外部疎通確認 `dig`，SSH接続）は **EIPのまま維持**．構成図のAXFR/NOTIFYフローに「プライベートIP経由（VPC内）」のラベルを追加．付録D-8「なぜゾーン転送はプライベートIP，インターネット公開はEIPか」を新規追加し，使い分けの根拠を解説． |
+> | v2.2 | 2026-06-21 | プレースホルダー命名の手順書内揺れを解消．§2-3 / §3-2-3 / §3-2-4 / §6 トラブルシュート / 付録D-6 で使われていた略記 `<Primary EIP>` `<Secondary EIP>` `<Primary プライベートIP>` `<Secondary プライベートIP>` `<外部DNS Secondary プライベートIP>` を，§3-3 パラメータ表の正式名 `<Primary NSDサーバーのEIP>` `<Secondary NSDサーバーのEIP>` `<Primary NSDサーバーのプライベートIP>` `<Secondary NSDサーバーのプライベートIP>` に統一．付録Aの汎用例示 `<NSDサーバー>`（digコマンドのメタプレースホルダー）は文脈が異なるためそのまま維持． |
 
 ------------------------------
 
@@ -108,7 +109,7 @@
 
 - [ ] Route53 `<親ドメイン>` ホストゾーンに `<取得するサブドメイン>` の NS 2件（ns1/ns2）と A 2件（Primary EIP / Secondary EIP）が登録されている（上長対応済み）
 - [ ] インターネットから `dig NS <取得するサブドメイン>` が `ns1.<取得するサブドメイン>` と `ns2.<取得するサブドメイン>` を返す
-- [ ] インターネットから `dig @<Primary EIP> NS <取得するサブドメイン>` と `dig @<Secondary EIP> NS <取得するサブドメイン>` がそれぞれ同じレコードを返す（ゾーン同期確認）
+- [ ] インターネットから `dig @<Primary NSDサーバーのEIP> NS <取得するサブドメイン>` と `dig @<Secondary NSDサーバーのEIP> NS <取得するサブドメイン>` がそれぞれ同じレコードを返す（ゾーン同期確認）
 
 ------------------------------
 
@@ -156,7 +157,7 @@
 | SSH | TCP | 22 | マイIP（踏み台経由） | 構築作業用 |
 | DNS (UDP) | UDP | 53 | 0.0.0.0/0 | インターネットからのDNS問い合わせ受信 |
 | DNS (TCP) | TCP | 53 | 0.0.0.0/0 | EDNS非対応や大型応答用 |
-| DNS (UDP) | UDP | 53 | `<Primary プライベートIP>/32` | PrimaryからのNOTIFY受信（再掲；全許可で吸収される） |
+| DNS (UDP) | UDP | 53 | `<Primary NSDサーバーのプライベートIP>/32` | PrimaryからのNOTIFY受信（再掲；全許可で吸収される） |
 
 #### 3-2-4. Secondary NSDサーバーのアウトバウンドルール
 
@@ -164,7 +165,7 @@
 |-------|------------|----------|--------|------|
 | HTTPS | TCP | 443 | 0.0.0.0/0 | dnf |
 | HTTP | TCP | 80 | 0.0.0.0/0 | dnfミラー |
-| DNS (TCP) | TCP | 53 | `<Primary プライベートIP>/32` | Primaryへの AXFR 要求 |
+| DNS (TCP) | TCP | 53 | `<Primary NSDサーバーのプライベートIP>/32` | Primaryへの AXFR 要求 |
 
 ### 3-3. パラメータ定義表
 
@@ -869,7 +870,7 @@ tail -n 50 /var/log/nsd.log
 nsd-control transfer <取得するサブドメイン>
 ```
 
-> **チェックポイント：** Primary の `nsd.conf` で `provide-xfr: <Secondary プライベートIP>` の `<Secondary プライベートIP>` が，Secondary EC2 の実際のプライベートIPと一致しているか．
+> **チェックポイント：** Primary の `nsd.conf` で `provide-xfr: <Secondary NSDサーバーのプライベートIP>` の `<Secondary NSDサーバーのプライベートIP>` が，Secondary EC2 の実際のプライベートIPと一致しているか．
 
 ------------------------------
 
@@ -1215,8 +1216,8 @@ zone:
 zone:
     name: "<取得するサブドメイン>"     ← 本手順書で追加
     zonefile: "<取得するサブドメイン>.zone"
-    provide-xfr: <外部DNS Secondary プライベートIP> NOKEY
-    notify: <外部DNS Secondary プライベートIP> NOKEY
+    provide-xfr: <Secondary NSDサーバーのプライベートIP> NOKEY
+    notify: <Secondary NSDサーバーのプライベートIP> NOKEY
 ```
 
 - SGの内部DNS問い合わせ（VPC CIDR）と外部DNS問い合わせ（0.0.0.0/0）は別々に許可する
