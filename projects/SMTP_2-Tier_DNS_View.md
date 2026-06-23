@@ -258,15 +258,42 @@ dnf install -y bind
 vi /etc/named.conf
 ```
 
+> **⚠️ 重要:viewを使う場合、デフォルトの zone 定義と include 文の扱いに注意**
+>
+> Amazon Linux 2023 にBINDをインストールすると、`/etc/named.conf` のファイル末尾付近に以下のような **既存のゾーン定義と include 文** がデフォルトで含まれている:
+>
+> ```
+> zone "." IN {
+>     type hint;
+>     file "named.ca";
+> };
+>
+> include "/etc/named.rfc1912.zones";
+> include "/etc/named.root.key";
+> ```
+>
+> **これらは view の外にあるため、view を1つでも追加すると BIND は起動エラーになるか、view が正しく機能しない**(後述の「仕掛けの解説」参照)。
+>
+> 対処として、これらの既存定義を **view の中に移動するか、コメントアウトする** 必要がある。本手順書では「全部 internal view の中に移動する」方針で進める。
+
 設定ファイルの編集内容:
 
 ```
-// ---以下のように変更---
+// ---options ブロック内を以下のように変更---
 // listen-on port 53 { 127.0.0.1; };       ← コメントアウト
 // listen-on-v6 port 53 { ::1; };          ← コメントアウト
 allow-query { any; };
 
-// ---ファイル末尾に追記---
+// ---ファイル末尾付近のデフォルト定義をコメントアウト---
+// zone "." IN {
+//     type hint;
+//     file "named.ca";
+// };
+//
+// include "/etc/named.rfc1912.zones";
+// include "/etc/named.root.key";
+
+// ---ファイル末尾に以下を追記---
 
 // === ACL定義(view判定用) ===
 acl "internal-net" {
@@ -279,6 +306,17 @@ view "internal" {
     match-clients { internal-net; };
     recursion yes;
 
+    // ルートヒント(再帰問い合わせに必要)
+    zone "." IN {
+        type hint;
+        file "named.ca";
+    };
+
+    // デフォルトのローカル用ゾーン(localhost等)
+    include "/etc/named.rfc1912.zones";
+    include "/etc/named.root.key";
+
+    // 本構成用のゾーン
     zone "ex.entrycl.net" IN {
         type master;
         file "/var/named/ex.entrycl.net.internal.zone";
@@ -301,29 +339,47 @@ view "external" {
     };
 
     // tr.local は外部に公開しない(意図的に存在させない)
+    // ルートヒントも external では不要(recursion no なので再帰しない)
 };
 ```
 
-> **🔧 仕掛けの解説①:`acl` で「内部」を明確に定義する**
+> **🔧 仕掛けの解説①:なぜ view を追加すると既存ゾーンが壊れるのか**
+>
+> BINDの仕様として、**view を1つでも宣言した瞬間、すべてのゾーン定義は何らかの view の中に入っていなければならない**。view の外にゾーンを置くと、設定エラーになる。
+>
+> デフォルトの `named.conf` には、ルートヒントゾーン(`zone "." IN { type hint; ... }`)と、`/etc/named.rfc1912.zones`(localhost等のゾーン)が view の外に書かれている。これらを view 内に移動するか、コメントアウトしないと、`named-checkconf` で「`view ... default already exists`」のようなエラーになる。
+>
+> これは**view 機能を導入するときに必ずハマる第一の関門**。
+
+> **🔧 仕掛けの解説②:なぜルートヒントを internal view 内に置くか**
+>
+> ルートヒント(`zone "."`)は「インターネット上のルートDNSサーバの場所」を教えるレコード。再帰問い合わせを行うときに必要(「`google.com` を引きたいけど自分は知らない、ルートに聞きに行こう」というフロー)。
+>
+> - internal view は `recursion yes` なので、社内ユーザーのために再帰問い合わせを行う → **ルートヒント必要**
+> - external view は `recursion no` なので、自分が権威を持つゾーンしか答えない → **ルートヒント不要**
+>
+> よってルートヒントは internal view にだけ置く。external に置いても害はないが、責務が明確になる。
+
+> **🔧 仕掛けの解説③:`acl` で「内部」を明確に定義する**
 >
 > `acl "internal-net"` で「VPC CIDR + 自分自身」を「内部とみなす範囲」として名前付けする。後で `match-clients { internal-net; }` のように使える。直接IPを書くこともできるが、ACLにすることで「定義箇所が1つに集約され、変更しやすい」設計になる。
 >
 > `127.0.0.1` を含めているのは、DNS Primary自身が自分のDNSを引きたい場合(`dig @127.0.0.1`)に internal view で応答してほしいから。
 
-> **🔧 仕掛けの解説②:view は「上から順に判定」される**
+> **🔧 仕掛けの解説④:view は「上から順に判定」される**
 >
 > BINDのviewは記述順に `match-clients` を判定し、最初にマッチしたviewが使われる。internal view を先に書くことで、`172.31.0.0/16` からの問い合わせは internal に吸い込まれ、それ以外は external に流れる。
 >
 > もし external view を先に書いてしまうと、`match-clients { any; }` が最初にマッチしてしまい、internal view は永遠に使われない。**順序が意味を持つ**ことに注意。
 
-> **🔧 仕掛けの解説③:なぜ internal は `recursion yes`、external は `recursion no` か**
+> **🔧 仕掛けの解説⑤:なぜ internal は `recursion yes`、external は `recursion no` か**
 >
 > - internal: VPC内のサーバが、`ex.entrycl.net` 以外のドメイン(例: `amazonaws.com`)を引きたいときに、このDNSがフォワーダとして動けるよう再帰問い合わせを許可
 > - external: 外部からの問い合わせに対しては、自分が権威を持つゾーン(`ex.entrycl.net`)以外には答えない。再帰許可しているDNSはオープンリゾルバ攻撃に悪用される危険がある
 >
 > 「外部にはオープンリゾルバとして振る舞わない」のはセキュリティの基本。
 
-> **🔧 仕掛けの解説④:なぜ `tr.local` は external view に書かないのか**
+> **🔧 仕掛けの解説⑥:なぜ `tr.local` は external view に書かないのか**
 >
 > external view は「外部に見せる情報」を定義する場所。`tr.local` を書いてしまうと、外部から `dig tr.local` で応答が返ってしまい、内部構造が漏れる。書かないことで「**そもそも存在しないドメイン**」として振る舞わせる(外部からは NXDOMAIN または REFUSED が返る)。
 >
@@ -595,27 +651,62 @@ systemctl enable rsyslog
 systemctl start postfix
 ```
 
-#### 4-3. /etc/resolv.conf の設定
+#### 4-3. DNS問い合わせ先の設定(systemd-resolved)
 
 受信SMTPは内部DNSを優先して引くようにする。
 
+Amazon Linux 2023 では `/etc/resolv.conf` は `systemd-resolved` によって自動管理されているため、`/etc/resolv.conf` を直接編集しても再起動や `systemd-resolved` の再起動で上書きされてしまう。よって、**`/etc/systemd/resolved.conf` の `DNS=` を編集する**のが正しい方法。
+
 ```bash
-vi /etc/resolv.conf
+vi /etc/systemd/resolved.conf
 ```
 
 ```
-nameserver <DNS_PRI>
+[Resolve]
+# 以下のように DNS= 行を編集(コメントアウトされていれば # を外す)
+DNS=<DNS_PRI>
 ```
 
-> **🔧 仕掛けの解説:なぜ内部DNSを優先して引くのか**
+編集後、systemd-resolved を再起動して設定を反映する:
+
+```bash
+systemctl restart systemd-resolved
+```
+
+設定が反映されているか確認:
+
+```bash
+resolvectl status
+# Current DNS Server: <DNS_PRI> と表示されればOK
+
+# 実際に内部DNSを引けているか確認
+dig user1.tr.local +short
+# 期待: <D1_PRI>
+```
+
+> **🔧 仕掛けの解説①:なぜ `/etc/resolv.conf` を直接編集しないのか**
+>
+> 多くのモダンなLinux(Amazon Linux 2023、Ubuntu 18.04以降、RHEL 8以降など)では `systemd-resolved` という常駐サービスがDNS問い合わせを管理している。`/etc/resolv.conf` は実体ファイルではなく、`/run/systemd/resolve/stub-resolv.conf` などへの **シンボリックリンク**になっており、systemd-resolved が自動生成している。
+>
+> よって `/etc/resolv.conf` を直接 vi で編集しても:
+> - 編集はその瞬間は反映される
+> - しかし、システム再起動や `systemd-resolved` 再起動、ネットワーク再起動時に元に戻る
+>
+> 設定の永続化のためには、systemd-resolved 自身の設定ファイル (`/etc/systemd/resolved.conf`) を編集する必要がある。
+
+> **🔧 仕掛けの解説②:なぜ内部DNSを優先して引くのか**
 >
 > 受信SMTPが `transport_maps` で「`user1@ex.entrycl.net` は `user1.tr.local` に渡せ」と判定したあと、`user1.tr.local` を実際にIPに解決する必要がある。`tr.local` ドメインは internal view にしか存在しないので、internal viewを返してくれるDNS(=自分の構築したDNS Primary)に問い合わせる必要がある。
 >
 > AWSのデフォルトDNS(VPC リゾルバ)に問い合わせても `tr.local` は解けない。
 
-> **🤔 考えるポイント:resolv.conf は再起動で上書きされることがある**
+> **🤔 考えるポイント:`resolvectl` で動作確認する習慣**
 >
-> Amazon Linux 2023 では `cloud-init` や `NetworkManager` が起動時に `/etc/resolv.conf` を書き換えることがある。本格運用するなら永続化対策が必要だが、本手順書ではスコープ外とする。検証中に設定が消えていたら再度書き直す。
+> systemd-resolved 環境では、`cat /etc/resolv.conf` よりも `resolvectl status` のほうが「実際に使われているDNS」を正確に表示する。今後、DNS関連のトラブルシューティングでは `resolvectl` を使う習慣をつけるとよい。
+>
+> - `resolvectl status`:現在のDNS設定状況を表示
+> - `resolvectl query <FQDN>`:systemd-resolved 経由で名前解決(dig相当)
+> - `resolvectl flush-caches`:DNSキャッシュをクリア
 
 #### 4-4. main.cf の事前整理
 
@@ -770,15 +861,26 @@ systemctl enable rsyslog
 systemctl start postfix
 ```
 
-#### 5-3. /etc/resolv.conf の設定
+#### 5-3. DNS問い合わせ先の設定(systemd-resolved)
 
 ```bash
-vi /etc/resolv.conf
+vi /etc/systemd/resolved.conf
 ```
 
 ```
-nameserver <DNS_PRI>
+[Resolve]
+DNS=<DNS_PRI>
 ```
+
+```bash
+systemctl restart systemd-resolved
+resolvectl status
+# Current DNS Server: <DNS_PRI> と表示されればOK
+```
+
+> **🔧 仕掛けの解説:Amazon Linux 2023 では systemd-resolved 経由で設定する**
+>
+> 受信SMTPと同じ理由で、`/etc/resolv.conf` を直接編集せず、`/etc/systemd/resolved.conf` を編集する。詳細は Step 4-3 の解説を参照。
 
 #### 5-4. main.cf の事前整理
 
@@ -1124,7 +1226,10 @@ tail -f /var/log/messages | grep "view "
 ```bash
 # 受信SMTPで
 dig user1.tr.local
-# プライベートIPが返ってこなければ、/etc/resolv.conf を確認
+# プライベートIPが返ってこなければ、systemd-resolved の DNS設定を確認
+resolvectl status
+# Current DNS Server: が <DNS_PRI> になっていなければ、
+# /etc/systemd/resolved.conf を編集後、systemctl restart systemd-resolved
 
 nc -zv user1.tr.local 25
 # 接続できなければ、配送SMTPのSGを確認
