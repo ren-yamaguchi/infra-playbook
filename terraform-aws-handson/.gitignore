@@ -6,8 +6,8 @@
 crash.log
 
 # 機密情報
-*.tfvars
-!example.tfvars
+#*.tfvars
+#!example.tfvars
 
 # OS
 .DS_Store
