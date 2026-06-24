@@ -1,10 +1,18 @@
 variable "name_prefix" { type = string }
 variable "vpc_cidr" { type = string }
-variable "public_subnet_cidrs" { type = list(string) }
-variable "private_subnet_cidrs" { type = list(string) }
 
-variable "availability_zones" {
-  description = "Explicit AZ list. Empty means auto-detect first 2 AZs in the region."
-  type        = list(string)
-  default     = []
+# Subnet definitions, keyed by subnet name.
+# type must be "public" or "private".
+variable "subnets" {
+  description = "Map of subnets keyed by name. Each must specify cidr, az, type."
+  type = map(object({
+    cidr = string
+    az   = string
+    type = string
+  }))
+
+  validation {
+    condition     = alltrue([for s in var.subnets : contains(["public", "private"], s.type)])
+    error_message = "Each subnet's type must be 'public' or 'private'."
+  }
 }
