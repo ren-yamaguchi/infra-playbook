@@ -120,7 +120,7 @@
 | ツール | telnet |
 | 備考 | **Dovecot不要、メールユーザー不要、NFSマウント不要** |
 
-> **🤔 考えるポイント:なぜ受信SMTPには Dovecot を入れないのか**
+> **考えるポイント:なぜ受信SMTPには Dovecot を入れないのか**
 >
 > Dovecotはユーザーのメールボックスにアクセスして配信する役割を持つ。受信SMTPはメールを受け取って即座に内部リレーするだけで、自分ではメールを保存しない。保存しないものに対してDovecotを動かしても意味がない。
 >
@@ -147,7 +147,7 @@
 | DNS (TCP) | TCP | 53 | 0.0.0.0/0 | ゾーン応答が512バイトを超えた場合のTCPフォールバック対応 |
 | NFS | TCP | 2049 | 172.31.0.0/16 | 配送SMTP3台とのファイル共有のため |
 
-> **🔧 仕掛けの解説:DNSのTCP/53も開けておく理由**
+> **仕掛けの解説:DNSのTCP/53も開けておく理由**
 >
 > 元の4台手順書ではUDP/53のみだったが、view定義によってゾーン応答が大きくなる場合、UDPで返しきれずTCPフォールバックが起きる。「念のためTCPも開ける」のは運用上の保険。
 
@@ -158,7 +158,7 @@
 | SSH | TCP | 22 | マイIP | ローカルからSSHログイン |
 | SMTP | TCP | 25 | 0.0.0.0/0 | 外部からのメール受信のため |
 
-> **🔧 仕掛けの解説:受信SMTPは「外向け25番」しか開けない**
+> **仕掛けの解説:受信SMTPは「外向け25番」しか開けない**
 >
 > 受信SMTPは外部からメールを受け取るために25番を全開放するが、POP3(110番)もNFS(2049番)も開けない。これは「受信SMTPはユーザーアカウントもメールボックスも持たない」という設計の必然的な帰結。
 >
@@ -172,7 +172,7 @@
 | SMTP | TCP | 25 | 172.31.0.0/16 | 受信SMTPからの内部リレー受信のみ(外部からは直接受け取らない) |
 | POP3 | TCP | 110 | 172.31.0.0/16 | 内部からのPOP3取得のため |
 
-> **🔧 仕掛けの解説:配送SMTPの25番は「内部のみ」**
+> **仕掛けの解説:配送SMTPの25番は「内部のみ」**
 >
 > 元の4台構成では、各SMTPが外部から直接受信する設計だったため `0.0.0.0/0` で25番を開けていた。新構成では「外部からの受信は受信SMTPのみ」という責務分離をしたので、配送SMTPは外部に25番を晒す必要がなくなる。
 >
@@ -206,7 +206,7 @@
 | 配送SMTP2 | `user2.tr.local` | 内部のみ |
 | 配送SMTP3 | `user3.tr.local` | 内部のみ |
 
-> **🔧 仕掛けの解説:外部に見せるホスト名と、内部にしか見せないホスト名**
+> **仕掛けの解説:外部に見せるホスト名と、内部にしか見せないホスト名**
 >
 > 受信SMTPは `tr.ex.net`(外部公開ドメイン)のホスト名を持つ。配送SMTPは `tr.local`(内部専用ドメイン)のホスト名を持つ。
 >
@@ -258,7 +258,7 @@ dnf install -y bind
 vi /etc/named.conf
 ```
 
-> **⚠️ 重要:viewを使う場合、デフォルトの zone 定義と include 文の扱いに注意**
+> **重要:viewを使う場合、デフォルトの zone 定義と include 文の扱いに注意**
 >
 > Amazon Linux 2023 にBINDをインストールすると、`/etc/named.conf` のファイル末尾付近に以下のような **既存のゾーン定義と include 文** がデフォルトで含まれている:
 >
@@ -343,7 +343,7 @@ view "external" {
 };
 ```
 
-> **🔧 仕掛けの解説①:なぜ view を追加すると既存ゾーンが壊れるのか**
+> **仕掛けの解説①:なぜ view を追加すると既存ゾーンが壊れるのか**
 >
 > BINDの仕様として、**view を1つでも宣言した瞬間、すべてのゾーン定義は何らかの view の中に入っていなければならない**。view の外にゾーンを置くと、設定エラーになる。
 >
@@ -351,7 +351,7 @@ view "external" {
 >
 > これは**view 機能を導入するときに必ずハマる第一の関門**。
 
-> **🔧 仕掛けの解説②:なぜルートヒントを internal view 内に置くか**
+> **仕掛けの解説②:なぜルートヒントを internal view 内に置くか**
 >
 > ルートヒント(`zone "."`)は「インターネット上のルートDNSサーバの場所」を教えるレコード。再帰問い合わせを行うときに必要(「`google.com` を引きたいけど自分は知らない、ルートに聞きに行こう」というフロー)。
 >
@@ -360,32 +360,32 @@ view "external" {
 >
 > よってルートヒントは internal view にだけ置く。external に置いても害はないが、責務が明確になる。
 
-> **🔧 仕掛けの解説③:`acl` で「内部」を明確に定義する**
+> **仕掛けの解説③:`acl` で「内部」を明確に定義する**
 >
 > `acl "internal-net"` で「VPC CIDR + 自分自身」を「内部とみなす範囲」として名前付けする。後で `match-clients { internal-net; }` のように使える。直接IPを書くこともできるが、ACLにすることで「定義箇所が1つに集約され、変更しやすい」設計になる。
 >
 > `127.0.0.1` を含めているのは、DNS Primary自身が自分のDNSを引きたい場合(`dig @127.0.0.1`)に internal view で応答してほしいから。
 
-> **🔧 仕掛けの解説④:view は「上から順に判定」される**
+> **仕掛けの解説④:view は「上から順に判定」される**
 >
 > BINDのviewは記述順に `match-clients` を判定し、最初にマッチしたviewが使われる。internal view を先に書くことで、`172.31.0.0/16` からの問い合わせは internal に吸い込まれ、それ以外は external に流れる。
 >
 > もし external view を先に書いてしまうと、`match-clients { any; }` が最初にマッチしてしまい、internal view は永遠に使われない。**順序が意味を持つ**ことに注意。
 
-> **🔧 仕掛けの解説⑤:なぜ internal は `recursion yes`、external は `recursion no` か**
+> **仕掛けの解説⑤:なぜ internal は `recursion yes`、external は `recursion no` か**
 >
 > - internal: VPC内のサーバが、`tr.ex.net` 以外のドメイン(例: `amazonaws.com`)を引きたいときに、このDNSがフォワーダとして動けるよう再帰問い合わせを許可
 > - external: 外部からの問い合わせに対しては、自分が権威を持つゾーン(`tr.ex.net`)以外には答えない。再帰許可しているDNSはオープンリゾルバ攻撃に悪用される危険がある
 >
 > 「外部にはオープンリゾルバとして振る舞わない」のはセキュリティの基本。
 
-> **🔧 仕掛けの解説⑥:なぜ `tr.local` は external view に書かないのか**
+> **仕掛けの解説⑥:なぜ `tr.local` は external view に書かないのか**
 >
 > external view は「外部に見せる情報」を定義する場所。`tr.local` を書いてしまうと、外部から `dig tr.local` で応答が返ってしまい、内部構造が漏れる。書かないことで「**そもそも存在しないドメイン**」として振る舞わせる(外部からは NXDOMAIN または REFUSED が返る)。
 >
 > これは「内部リソース情報を外部に晒さない」という、よくある内部DNS設計のパターン。
 
-> **🤔 考えるポイント:`tr.ex.net` は internal にも external にも書かれている**
+> **考えるポイント:`tr.ex.net` は internal にも external にも書かれている**
 >
 > 同じドメイン名が両方のviewに登場するのは違和感があるかもしれない。しかしBIND の view は「**問い合わせ元が違えば、別世界**」として扱うので、これは正しい。同じFQDN(例: `mx.tr.ex.net`)でも、internal viewでは `<MX_PRI>`、external viewでは `<MX_PUB>` という違うIPを返せる。
 
@@ -403,7 +403,7 @@ vi /var/named/tr.ex.net.external.zone
 ```
 
 ```
-$TTL 3600
+$TTL 300
 @ IN SOA ns.tr.ex.net. admin.tr.ex.net. (
     20260622 ; serial
     3600 ; refresh
@@ -418,11 +418,11 @@ ns           IN A <DNS_PUB>
 mx           IN A <MX_PUB>
 ```
 
-> **🔧 仕掛けの解説:外部用ゾーンには MX が 1 つだけ**
+> **仕掛けの解説:外部用ゾーンには MX が 1 つだけ**
 >
 > 元の4台構成では `user1.teama.entrycl.net` 〜 `user3.teama.entrycl.net` の3つのMXがあり、外部から見ても3台のSMTPが存在していた。新構成では「外部からは受信SMTPしか見えない」設計なので、MXは `mx.tr.ex.net` 1つに集約する。配送SMTPは外部にAレコードもMXも公開しない。
 
-> **🤔 考えるポイント:なぜ MX の数を減らせるのか**
+> **考えるポイント:なぜ MX の数を減らせるのか**
 >
 > MX は「このドメイン宛のメールを受け取るサーバ」を示すレコード。受信SMTPに集約したので、外部から見える「メール受信窓口」は1台だけ。よってMXは1つで足りる。
 >
@@ -435,7 +435,7 @@ vi /var/named/tr.ex.net.internal.zone
 ```
 
 ```
-$TTL 3600
+$TTL 300
 @ IN SOA ns.tr.ex.net. admin.tr.ex.net. (
     20260622 ; serial
     3600 ; refresh
@@ -450,7 +450,7 @@ ns           IN A <DNS_PRI>
 mx           IN A <MX_PRI>
 ```
 
-> **🔧 仕掛けの解説:外部用と内部用の違いは「Aレコードの値だけ」**
+> **仕掛けの解説:外部用と内部用の違いは「Aレコードの値だけ」**
 >
 > ホスト名・MX・NSレコードの構造はまったく同じ。違いはAレコードの値が「グローバルIP」か「プライベートIP」かだけ。
 >
@@ -465,7 +465,7 @@ vi /var/named/tr.local.internal.zone
 ```
 
 ```
-$TTL 3600
+$TTL 300
 @ IN SOA ns.tr.local. admin.tr.local. (
     20260622 ; serial
     3600 ; refresh
@@ -481,17 +481,17 @@ user2        IN A <D2_PRI>
 user3        IN A <D3_PRI>
 ```
 
-> **🔧 仕掛けの解説①:`tr.local` は internal view 専用**
+> **仕掛けの解説①:`tr.local` は internal view 専用**
 >
 > このドメインは internal view にしか定義されていない。外部から `dig user1.tr.local @<DNS_PUB>` しても、external view にこのゾーンがないため応答できない(REFUSEDまたは空応答)。これにより、配送SMTPのプライベートIPやサーバ名を外部に漏らさない設計になる。
 
-> **🤔 考えるポイント:なぜ `.local` を選んだのか**
+> **考えるポイント:なぜ `.local` を選んだのか**
 >
 > `.local` は伝統的に内部ネットワーク用ドメインとして広く使われてきた。本手順書では「**内部専用であることを名前で明示する慣習**」として `.local` を採用している。
 >
 > 厳密にはRFC的には議論がある名前空間だが、学習目的では「見た目で内部用とわかる」ことを優先している。
 
-> **🔧 仕掛けの解説②:MXレコードが `tr.local` にはない**
+> **仕掛けの解説②:MXレコードが `tr.local` にはない**
 >
 > `tr.local` はサーバ間通信用のドメインであり、メールの宛先ドメインとして使うわけではないので、MXは不要。`user1.tr.local` はあくまで「配送SMTP1サーバのホスト名」であり、メールアドレスのドメインではない。
 >
@@ -554,7 +554,7 @@ vi /etc/exports
 # ----------------
 ```
 
-> **🔧 仕掛けの解説:`172.31.0.0/16` 全体に公開している意味**
+> **仕掛けの解説:`172.31.0.0/16` 全体に公開している意味**
 >
 > 配送SMTP3台だけでなく、受信SMTPも含めてVPC内すべてに公開しているように見えるが、実際には**受信SMTPはNFSをマウントしない**ので問題にならない。
 >
@@ -574,7 +574,7 @@ chown -R root:mail /share
 chmod 770 /share
 ```
 
-> **🔧 仕掛けの解説:なぜ `mail` グループに 770 か**
+> **仕掛けの解説:なぜ `mail` グループに 770 か**
 >
 > このあと作成する全メールユーザーは `mail` グループ所属。`/share` を `mail` グループ書き込み可能にすることで、各ユーザーが自分のメールボックス(`/share/<ユーザー名>/`)を作成・更新できる。
 >
@@ -606,23 +606,23 @@ passwd user2
 passwd user3
 ```
 
-> **🔧 仕掛けの解説①:なぜ受信SMTPには user1〜3 を作らないか**
+> **仕掛けの解説①:なぜ受信SMTPには user1〜3 を作らないか**
 >
 > 受信SMTPで `user1` を作ってしまうと、Postfixは「自分のサーバに `user1` というローカルユーザーがいる」と認識する。後に `main.cf` で `mydestination = tr.ex.net` のように設定してしまった場合、受信SMTPが「自分でローカル配送できる」と勘違いし、メールが受信SMTPのローカル領域に保存されてしまう。
 >
 > ユーザーを作らないことで、「うっかり設定ミスをしても、受信SMTPはローカル配送できない」という二重の防御になる。
 
-> **🤔 考えるポイント①:UID統一の重要性(NFS の本質)**
+> **考えるポイント①:UID統一の重要性(NFS の本質)**
 >
 > NFSは「ファイル所有権をUID/GIDで管理する」プロトコル。配送SMTP1で作成したファイル(UID=2001の所有)は、配送SMTP2で見ると「UID=2001を持つユーザー」のものとして認識される。もし配送SMTP2の `user1` のUIDが2001でなかったら、別人扱いになりメールが見えなくなる。
 >
 > よって**全サーバでUIDを揃える**ことが絶対条件。
 
-> **🤔 考えるポイント②:DNSサーバにも user1〜3 を作る理由**
+> **考えるポイント②:DNSサーバにも user1〜3 を作る理由**
 >
 > DNSサーバ自身はメール処理しないが、NFSサーバとして `/share` 上に各ユーザーのディレクトリを作る場面で、所有者UIDが一致している必要がある。後でメンテナンス時に DNSサーバ上で `ls -l /share` してファイル所有者を確認するときも、UIDではなくユーザー名で表示されると見やすい。
 
-> **🔧 仕掛けの解説②:`-M` と `-K MAIL_DIR=/dev/null` の意味**
+> **仕掛けの解説②:`-M` と `-K MAIL_DIR=/dev/null` の意味**
 >
 > - `-M`: ホームディレクトリを作らない(メール専用ユーザーなのでログイン用ホームは不要)
 > - `-K MAIL_DIR=/dev/null`: useraddが自動的に `/var/spool/mail/<ユーザー名>` を作るのを抑止する。NFS共有先に作るので、ローカルに作られると混乱するため
@@ -684,7 +684,7 @@ dig user1.tr.local +short
 # 期待: <D1_PRI>
 ```
 
-> **🔧 仕掛けの解説①:なぜ `/etc/resolv.conf` を直接編集しないのか**
+> **仕掛けの解説①:なぜ `/etc/resolv.conf` を直接編集しないのか**
 >
 > 多くのモダンなLinux(Amazon Linux 2023、Ubuntu 18.04以降、RHEL 8以降など)では `systemd-resolved` という常駐サービスがDNS問い合わせを管理している。`/etc/resolv.conf` は実体ファイルではなく、`/run/systemd/resolve/stub-resolv.conf` などへの **シンボリックリンク**になっており、systemd-resolved が自動生成している。
 >
@@ -694,13 +694,13 @@ dig user1.tr.local +short
 >
 > 設定の永続化のためには、systemd-resolved 自身の設定ファイル (`/etc/systemd/resolved.conf`) を編集する必要がある。
 
-> **🔧 仕掛けの解説②:なぜ内部DNSを優先して引くのか**
+> **仕掛けの解説②:なぜ内部DNSを優先して引くのか**
 >
 > 受信SMTPが `transport_maps` で「`user1@tr.ex.net` は `user1.tr.local` に渡せ」と判定したあと、`user1.tr.local` を実際にIPに解決する必要がある。`tr.local` ドメインは internal view にしか存在しないので、internal viewを返してくれるDNS(=自分の構築したDNS Primary)に問い合わせる必要がある。
 >
 > AWSのデフォルトDNS(VPC リゾルバ)に問い合わせても `tr.local` は解けない。
 
-> **🤔 考えるポイント:`resolvectl` で動作確認する習慣**
+> **考えるポイント:`resolvectl` で動作確認する習慣**
 >
 > systemd-resolved 環境では、`cat /etc/resolv.conf` よりも `resolvectl status` のほうが「実際に使われているDNS」を正確に表示する。今後、DNS関連のトラブルシューティングでは `resolvectl` を使う習慣をつけるとよい。
 >
@@ -746,13 +746,13 @@ relay_domains = tr.ex.net
 transport_maps = hash:/etc/postfix/transport
 ```
 
-> **🔧 仕掛けの解説①:`mydestination` に `tr.ex.net` を含めない**
+> **仕掛けの解説①:`mydestination` に `tr.ex.net` を含めない**
 >
 > もし含めると、Postfixは「`user1@tr.ex.net` 宛のメールは自分が最終配送する」と判断し、ローカルユーザー `user1` を探そうとする。しかし受信SMTPには `user1` が存在しないので、`User unknown in local recipient table` で配送失敗する。
 >
 > `mydestination` に含めないことで、Postfixに「自分はこのドメインの最終配送先ではない」と伝えることになり、`transport_maps` の判定に処理が回ってくる。
 
-> **🔧 仕掛けの解説②:`relay_domains` の意味**
+> **仕掛けの解説②:`relay_domains` の意味**
 >
 > Postfixはデフォルトで「自分宛(=`mydestination`)でも、信頼ネットワーク(=`mynetworks`)でもない宛先」へのメールはリレー拒否する(オープンリレー防止)。
 >
@@ -760,7 +760,7 @@ transport_maps = hash:/etc/postfix/transport
 >
 > `relay_domains` がなければ、外部からのメールは "Relay access denied" で全部弾かれる。
 
-> **🔧 仕掛けの解説③:`mydestination` vs `relay_domains`**
+> **仕掛けの解説③:`mydestination` vs `relay_domains`**
 >
 > 似て見えるが役割が違う:
 > - `mydestination`: 「**自分が最終配送する**」ドメイン
@@ -768,7 +768,7 @@ transport_maps = hash:/etc/postfix/transport
 >
 > 受信SMTPは `tr.ex.net` 宛のメールを「自分では配送せず、リレーで渡す」役割なので、`relay_domains` に入れる。配送SMTPは「自分が最終配送する」役割なので、`mydestination` に入れる(Step 5で設定)。
 
-> **🔧 仕掛けの解説④:`mynetworks` に `172.31.0.0/16` を入れる理由**
+> **仕掛けの解説④:`mynetworks` に `172.31.0.0/16` を入れる理由**
 >
 > 内部のサーバ(配送SMTP等)から、この受信SMTPを経由して外部にメールを送るような構成にも対応できるようにしておく。本手順書のスコープでは「外部→受信→配送」だけだが、内部→外部の経路も将来的に通せるようにするための備え。
 
@@ -784,19 +784,19 @@ user2@tr.ex.net    smtp:[user2.tr.local]
 user3@tr.ex.net    smtp:[user3.tr.local]
 ```
 
-> **🔧 仕掛けの解説①:`[ ]` の意味**
+> **仕掛けの解説①:`[ ]` の意味**
 >
 > `[user1.tr.local]` の角括弧は「MXレコードを引かずに、このホストのAレコードに直接SMTP接続せよ」という指示。
 >
 > 括弧がないと、Postfixは `user1.tr.local` のMXレコードを引きにいく。`tr.local` ゾーンにはMXを定義していないので、見つからないかフォールバックの挙動になる。配送SMTPはMXを持たないAレコードのみの存在なので、`[ ]` で「Aレコード直接指定」を明示する。
 
-> **🔧 仕掛けの解説②:`transport_maps` は「宛先書き換え」ではない**
+> **仕掛けの解説②:`transport_maps` は「宛先書き換え」ではない**
 >
 > このマップは「宛先 `user1@tr.ex.net` のメールを、`user1.tr.local` というサーバにSMTPで渡せ」という**ルーティング指示**。メールヘッダの `To:` は書き換わらない。
 >
 > 配送SMTP1に渡されたメールも、宛先は `user1@tr.ex.net` のまま。だから配送SMTP1側で `tr.ex.net` を `mydestination` に含めて「受け入れ準備」をしておく必要がある(Step 5)。
 
-> **🤔 考えるポイント:なぜわざわざユーザーごとに別サーバに振るのか**
+> **考えるポイント:なぜわざわざユーザーごとに別サーバに振るのか**
 >
 > 元の4台構成と同じ「ユーザー1人につき1サーバ」のポリシーを踏襲しているため。実運用では1つの配送SMTPで全員を扱う集約構成のほうが一般的だが、本手順書では「責務分離」の学習のため意図的にユーザーごとにサーバを分けている。
 >
@@ -811,13 +811,13 @@ postmap /etc/postfix/transport
 ls -l /etc/postfix/transport.db
 ```
 
-> **🔧 仕掛けの解説:なぜ `postmap` が必要か**
+> **仕掛けの解説:なぜ `postmap` が必要か**
 >
 > Postfixは高速ルックアップのため、テキストファイル(`transport`)を直接読まずハッシュDB(`transport.db`)を参照する。`transport` を編集したら必ず `postmap` を実行する必要がある。
 >
 > 編集後に `postmap` を忘れると、テキストは新しいのにDBは古いまま、という不整合が起きる。
 
-> **🤔 考えるポイント:`/etc/aliases` も同じ仕組み**
+> **考えるポイント:`/etc/aliases` も同じ仕組み**
 >
 > `/etc/aliases` を編集した後に `newaliases` を実行するのと同じ構造。Postfixの「マップファイル」と呼ばれるものは、ほぼすべて「テキスト編集 → ハッシュ化コマンド実行」のセット。
 
@@ -878,7 +878,7 @@ resolvectl status
 # Current DNS Server: <DNS_PRI> と表示されればOK
 ```
 
-> **🔧 仕掛けの解説:Amazon Linux 2023 では systemd-resolved 経由で設定する**
+> **仕掛けの解説:Amazon Linux 2023 では systemd-resolved 経由で設定する**
 >
 > 受信SMTPと同じ理由で、`/etc/resolv.conf` を直接編集せず、`/etc/systemd/resolved.conf` を編集する。詳細は Step 4-3 の解説を参照。
 
@@ -917,7 +917,7 @@ mail_spool_directory = /var/spool/mail/
 > 配送SMTP2では `myhostname = user2.tr.local`
 > 配送SMTP3では `myhostname = user3.tr.local`
 
-> **🔧 仕掛けの解説①:`mydomain` と `mydestination` の役割の違い**
+> **仕掛けの解説①:`mydomain` と `mydestination` の役割の違い**
 >
 > - `mydomain` = 自分が「名乗る」ドメイン。`myhostname` のドメイン部や、`myorigin` のデフォルト値に使われる
 > - `mydestination` = 自分が「受け持つ」ドメインのリスト
@@ -926,13 +926,13 @@ mail_spool_directory = /var/spool/mail/
 >
 > 「**名乗るドメインと、受け持つドメインは違ってよい**」。これが理解の鍵。
 
-> **🔧 仕掛けの解説②:なぜ `tr.ex.net` を `mydestination` に入れる必要があるか**
+> **仕掛けの解説②:なぜ `tr.ex.net` を `mydestination` に入れる必要があるか**
 >
 > 受信SMTPから渡されてくるメールの宛先は `user1@tr.ex.net` のまま(`transport_maps` はアドレスを書き換えない)。配送SMTPが「自分はこのドメイン宛を受け取る」と宣言していないと、「他のサーバに渡してください」と Relay access denied で弾いてしまう。
 >
 > `mydestination` に `tr.ex.net` を入れることで、「自分は `tr.ex.net` ドメインの `user1` の最終配送先である」と認識し、ローカルの `/var/spool/mail/user1/` に書き込む。
 
-> **🤔 考えるポイント:配送SMTP1が user2 宛のメールを受けたらどうなるか**
+> **考えるポイント:配送SMTP1が user2 宛のメールを受けたらどうなるか**
 >
 > 設計上、受信SMTPは `transport_maps` で `user2` 宛は `user2.tr.local` に振り分けるので、配送SMTP1には届かない。
 >
@@ -943,7 +943,7 @@ mail_spool_directory = /var/spool/mail/
 >
 > よって最終的にメールは届くが、想定外の経路。`transport_maps` は「正しい経路に流すための交通整理」であり、間違って届いても破綻はしない、という安全マージン。
 
-> **🔧 仕掛けの解説③:なぜ受信SMTPと違って `relay_domains` がないのか**
+> **仕掛けの解説③:なぜ受信SMTPと違って `relay_domains` がないのか**
 >
 > 配送SMTPの役割は「最終配送のみ」。リレーしない。`mynetworks = 172.31.0.0/16` で内部からの送信を信頼するので、もし内部から外部宛のメールが来てもリレーは可能になるが、`relay_domains` を明示的に空にしておく方が責務が明確。
 
@@ -982,7 +982,7 @@ mail_location = maildir:/var/spool/mail/%u/
 # ---------------------
 ```
 
-> **🤔 考えるポイント:Maildir 形式が NFS と相性が良い理由**
+> **考えるポイント:Maildir 形式が NFS と相性が良い理由**
 >
 > Maildir は「1メール=1ファイル」の方式。`new/`, `cur/`, `tmp/` のサブディレクトリを使い、ファイル単位でアトミックに移動することで状態管理する。
 >
@@ -997,7 +997,7 @@ vi /etc/dovecot/conf.d/10-ssl.conf
 # 「ssl = required」を「#ssl = required」のようにコメントアウト
 ```
 
-> **🔧 仕掛けの解説:本来はTLS化すべきだが学習用には省略**
+> **仕掛けの解説:本来はTLS化すべきだが学習用には省略**
 >
 > 本番運用では SSL/TLS は必須だが、本手順書では証明書取得を含めると複雑になるので無効化している。ネットワーク上をパスワードが平文で流れるので、本構成は閉域学習用に限定すること。
 
@@ -1042,13 +1042,13 @@ df -h
 
 **期待する結果:** `df -h` の出力に `<DNS_PRI>:/share` が `/var/spool/mail` にマウントされていることが表示される。
 
-> **🤔 考えるポイント:なぜ受信SMTPはNFSマウントしないのか**
+> **考えるポイント:なぜ受信SMTPはNFSマウントしないのか**
 >
 > 受信SMTPはメールを保存しない。受け取ったらすぐ配送SMTPに渡す。よってメールスプール用のNFS共有は不要。
 >
 > もし受信SMTPにもNFSマウントしてしまうと、「受信SMTPが直接ローカル配送できる」状態になってしまい、設計の責務分離が崩れる可能性がある。「**マウントしないこと**」も意図的な設計判断。
 
-> **🔧 仕掛けの解説:配送SMTP間でメールが見える仕組み**
+> **仕掛けの解説:配送SMTP間でメールが見える仕組み**
 >
 > 配送SMTP1〜3はすべて同じNFS共有 `/share` を `/var/spool/mail/` にマウントしている。よって配送SMTP1の `/var/spool/mail/user1/` も、配送SMTP2から見れば同じ内容に見える。
 >
@@ -1177,7 +1177,7 @@ retr 1
 quit
 ```
 
-> **🤔 考えるポイント:なぜ配送SMTP2 から配送SMTP1 のメールが取れる?**
+> **考えるポイント:なぜ配送SMTP2 から配送SMTP1 のメールが取れる?**
 >
 > 配送SMTP2 にも `user1` がUID統一で作成されており、`/var/spool/mail/user1/` は NFS 共有上にある。よって配送SMTP1上のメールも、配送SMTP2 から POP3 でアクセス可能。
 >
