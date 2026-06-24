@@ -33,20 +33,20 @@
 > **本手順書のスコープについて(重要)**
 >
 > 本手順書ではDNSサーバとして独自のBINDを構築するが、外部(Outlook等)からの名前解決を成立させるためには、**Route 53等の上位DNSでのサブドメイン権限委譲(NSレコード設定)** が本来必要となる。
-> 本手順書ではRoute 53での権限委譲手順自体は省略しているが、`ex.entrycl.net` のように既に権限委譲済みのドメイン配下を利用する前提で記述している。
+> 本手順書ではRoute 53での権限委譲手順自体は省略しているが、`tr.ex.net` のように既に権限委譲済みのドメイン配下を利用する前提で記述している。
 
 ### 2-2. 構成概要(アーキテクチャ)
 
 ```
                   【外部(Outlook 等)】
                           ↓
-              宛先: userX@ex.entrycl.net
+              宛先: userX@tr.ex.net
                           ↓
               [外部からのDNS問い合わせ]
               → external view: グローバルIPを応答
                           ↓
               [受信SMTP(フロント)]
-              mx.ex.entrycl.net
+              mx.tr.ex.net
                ・Postfix のみ(Dovecot・NFS・ユーザーなし)
                ・transport_maps で配送先を振り分け
                           ↓
@@ -65,10 +65,10 @@
                     [NFS /share]
                           ↑
               [DNS Primary(兼NFS)]
-              ns.ex.entrycl.net
+              ns.tr.ex.net
               ├─ BIND(view対応)
-              │   ├─ external view → ex.entrycl.net(グローバルIP)
-              │   └─ internal view → ex.entrycl.net(プライベートIP)
+              │   ├─ external view → tr.ex.net(グローバルIP)
+              │   └─ internal view → tr.ex.net(プライベートIP)
               │                    + tr.local(プライベートIP)
               └─ NFS共有 (/share)
 ```
@@ -79,10 +79,10 @@
 
 ### 2-3. 完成イメージ(ゴール定義)
 
-- [ ] 外部から `userX@ex.entrycl.net` 宛にメールを送信すると、受信SMTP → 対応する配送SMTP → NFS共有ディレクトリ の経路で配送される
+- [ ] 外部から `userX@tr.ex.net` 宛にメールを送信すると、受信SMTP → 対応する配送SMTP → NFS共有ディレクトリ の経路で配送される
 - [ ] 各配送SMTPで `/var/spool/mail/<ユーザー名>` 内にメールが届いている
 - [ ] 各配送SMTPから telnet でPOP3接続し、対象ユーザーでログインしてメールを取得できる
-- [ ] VPC内から `dig ex.entrycl.net` するとプライベートIP、VPC外から `dig ex.entrycl.net @<DNS_PUB>` するとグローバルIPが返る
+- [ ] VPC内から `dig tr.ex.net` するとプライベートIP、VPC外から `dig tr.ex.net @<DNS_PUB>` するとグローバルIPが返る
 - [ ] VPC外から `dig user1.tr.local @<DNS_PUB>` しても解決できない(internal-onlyゾーン)
 
 ---
@@ -200,19 +200,19 @@
 
 | サーバ | 設定するホスト名 | 用途のドメイン |
 |---|---|---|
-| DNS兼NFSサーバ | `ns.ex.entrycl.net` | 外部にも見せる |
-| 受信SMTPサーバ | `mx.ex.entrycl.net` | 外部にも見せる |
+| DNS兼NFSサーバ | `ns.tr.ex.net` | 外部にも見せる |
+| 受信SMTPサーバ | `mx.tr.ex.net` | 外部にも見せる |
 | 配送SMTP1 | `user1.tr.local` | 内部のみ |
 | 配送SMTP2 | `user2.tr.local` | 内部のみ |
 | 配送SMTP3 | `user3.tr.local` | 内部のみ |
 
 > **🔧 仕掛けの解説:外部に見せるホスト名と、内部にしか見せないホスト名**
 >
-> 受信SMTPは `ex.entrycl.net`(外部公開ドメイン)のホスト名を持つ。配送SMTPは `tr.local`(内部専用ドメイン)のホスト名を持つ。
+> 受信SMTPは `tr.ex.net`(外部公開ドメイン)のホスト名を持つ。配送SMTPは `tr.local`(内部専用ドメイン)のホスト名を持つ。
 >
 > これにより、「外部から見える存在は受信SMTPだけ」「配送SMTPは外部からは存在自体が知られない」という設計が、ホスト名レベルでも一貫する。
 >
-> もし配送SMTPに `user1.ex.entrycl.net` のような外部ドメインを使うと、「外部に公開しているドメインなのに、外からは解決できない」という違和感が生まれ、設計の意図が伝わりにくくなる。
+> もし配送SMTPに `user1.tr.ex.net` のような外部ドメインを使うと、「外部に公開しているドメインなのに、外からは解決できない」という違和感が生まれ、設計の意図が伝わりにくくなる。
 
 ---
 
@@ -242,7 +242,7 @@
 #### 1-1. ホスト名の設定
 
 ```bash
-sudo hostnamectl set-hostname ns.ex.entrycl.net
+sudo hostnamectl set-hostname ns.tr.ex.net
 sudo su -
 ```
 
@@ -317,9 +317,9 @@ view "internal" {
     include "/etc/named.root.key";
 
     // 本構成用のゾーン
-    zone "ex.entrycl.net" IN {
+    zone "tr.ex.net" IN {
         type master;
-        file "/var/named/ex.entrycl.net.internal.zone";
+        file "/var/named/tr.ex.net.internal.zone";
     };
 
     zone "tr.local" IN {
@@ -333,9 +333,9 @@ view "external" {
     match-clients { any; };
     recursion no;
 
-    zone "ex.entrycl.net" IN {
+    zone "tr.ex.net" IN {
         type master;
-        file "/var/named/ex.entrycl.net.external.zone";
+        file "/var/named/tr.ex.net.external.zone";
     };
 
     // tr.local は外部に公開しない(意図的に存在させない)
@@ -374,8 +374,8 @@ view "external" {
 
 > **🔧 仕掛けの解説⑤:なぜ internal は `recursion yes`、external は `recursion no` か**
 >
-> - internal: VPC内のサーバが、`ex.entrycl.net` 以外のドメイン(例: `amazonaws.com`)を引きたいときに、このDNSがフォワーダとして動けるよう再帰問い合わせを許可
-> - external: 外部からの問い合わせに対しては、自分が権威を持つゾーン(`ex.entrycl.net`)以外には答えない。再帰許可しているDNSはオープンリゾルバ攻撃に悪用される危険がある
+> - internal: VPC内のサーバが、`tr.ex.net` 以外のドメイン(例: `amazonaws.com`)を引きたいときに、このDNSがフォワーダとして動けるよう再帰問い合わせを許可
+> - external: 外部からの問い合わせに対しては、自分が権威を持つゾーン(`tr.ex.net`)以外には答えない。再帰許可しているDNSはオープンリゾルバ攻撃に悪用される危険がある
 >
 > 「外部にはオープンリゾルバとして振る舞わない」のはセキュリティの基本。
 
@@ -385,9 +385,9 @@ view "external" {
 >
 > これは「内部リソース情報を外部に晒さない」という、よくある内部DNS設計のパターン。
 
-> **🤔 考えるポイント:`ex.entrycl.net` は internal にも external にも書かれている**
+> **🤔 考えるポイント:`tr.ex.net` は internal にも external にも書かれている**
 >
-> 同じドメイン名が両方のviewに登場するのは違和感があるかもしれない。しかしBIND の view は「**問い合わせ元が違えば、別世界**」として扱うので、これは正しい。同じFQDN(例: `mx.ex.entrycl.net`)でも、internal viewでは `<MX_PRI>`、external viewでは `<MX_PUB>` という違うIPを返せる。
+> 同じドメイン名が両方のviewに登場するのは違和感があるかもしれない。しかしBIND の view は「**問い合わせ元が違えば、別世界**」として扱うので、これは正しい。同じFQDN(例: `mx.tr.ex.net`)でも、internal viewでは `<MX_PRI>`、external viewでは `<MX_PUB>` という違うIPを返せる。
 
 #### 1-4. 構文チェック
 
@@ -399,20 +399,20 @@ named-checkconf
 #### 1-5. 外部用ゾーンファイル作成
 
 ```bash
-vi /var/named/ex.entrycl.net.external.zone
+vi /var/named/tr.ex.net.external.zone
 ```
 
 ```
 $TTL 3600
-@ IN SOA ns.ex.entrycl.net. admin.ex.entrycl.net. (
+@ IN SOA ns.tr.ex.net. admin.tr.ex.net. (
     20260622 ; serial
     3600 ; refresh
     3600 ; retry
     3600 ; expire
     3600 ) ; minimum
 
-    IN NS ns.ex.entrycl.net.
-    IN MX 10 mx.ex.entrycl.net.
+    IN NS ns.tr.ex.net.
+    IN MX 10 mx.tr.ex.net.
 
 ns           IN A <DNS_PUB>
 mx           IN A <MX_PUB>
@@ -420,7 +420,7 @@ mx           IN A <MX_PUB>
 
 > **🔧 仕掛けの解説:外部用ゾーンには MX が 1 つだけ**
 >
-> 元の4台構成では `user1.teama.entrycl.net` 〜 `user3.teama.entrycl.net` の3つのMXがあり、外部から見ても3台のSMTPが存在していた。新構成では「外部からは受信SMTPしか見えない」設計なので、MXは `mx.ex.entrycl.net` 1つに集約する。配送SMTPは外部にAレコードもMXも公開しない。
+> 元の4台構成では `user1.teama.entrycl.net` 〜 `user3.teama.entrycl.net` の3つのMXがあり、外部から見ても3台のSMTPが存在していた。新構成では「外部からは受信SMTPしか見えない」設計なので、MXは `mx.tr.ex.net` 1つに集約する。配送SMTPは外部にAレコードもMXも公開しない。
 
 > **🤔 考えるポイント:なぜ MX の数を減らせるのか**
 >
@@ -428,23 +428,23 @@ mx           IN A <MX_PUB>
 >
 > 元の4台構成では「ユーザーごとにメールサーバが分かれている」という設計だったため、ユーザーごとにMXが必要だった。設計が変わればDNSの中身も変わる。
 
-#### 1-6. 内部用ゾーンファイル作成(ex.entrycl.net)
+#### 1-6. 内部用ゾーンファイル作成(tr.ex.net)
 
 ```bash
-vi /var/named/ex.entrycl.net.internal.zone
+vi /var/named/tr.ex.net.internal.zone
 ```
 
 ```
 $TTL 3600
-@ IN SOA ns.ex.entrycl.net. admin.ex.entrycl.net. (
+@ IN SOA ns.tr.ex.net. admin.tr.ex.net. (
     20260622 ; serial
     3600 ; refresh
     3600 ; retry
     3600 ; expire
     3600 ) ; minimum
 
-    IN NS ns.ex.entrycl.net.
-    IN MX 10 mx.ex.entrycl.net.
+    IN NS ns.tr.ex.net.
+    IN MX 10 mx.tr.ex.net.
 
 ns           IN A <DNS_PRI>
 mx           IN A <MX_PRI>
@@ -495,13 +495,13 @@ user3        IN A <D3_PRI>
 >
 > `tr.local` はサーバ間通信用のドメインであり、メールの宛先ドメインとして使うわけではないので、MXは不要。`user1.tr.local` はあくまで「配送SMTP1サーバのホスト名」であり、メールアドレスのドメインではない。
 >
-> メールアドレスは `user1@ex.entrycl.net` のまま。**サーバ名とメールアドレスのドメインを切り離せる**のが、この構成の特徴の一つ。
+> メールアドレスは `user1@tr.ex.net` のまま。**サーバ名とメールアドレスのドメインを切り離せる**のが、この構成の特徴の一つ。
 
 #### 1-8. ゾーン構文チェック
 
 ```bash
-named-checkzone ex.entrycl.net /var/named/ex.entrycl.net.external.zone
-named-checkzone ex.entrycl.net /var/named/ex.entrycl.net.internal.zone
+named-checkzone tr.ex.net /var/named/tr.ex.net.external.zone
+named-checkzone tr.ex.net /var/named/tr.ex.net.internal.zone
 named-checkzone tr.local /var/named/tr.local.internal.zone
 # 全て「OK」と出ればOK
 ```
@@ -518,10 +518,10 @@ systemctl enable named
 
 ```bash
 # 127.0.0.1 は internal-net に含まれるので internal view で応答するはず
-dig @127.0.0.1 ex.entrycl.net mx +short
-# 期待: 10 mx.ex.entrycl.net.
+dig @127.0.0.1 tr.ex.net mx +short
+# 期待: 10 mx.tr.ex.net.
 
-dig @127.0.0.1 mx.ex.entrycl.net +short
+dig @127.0.0.1 mx.tr.ex.net +short
 # 期待: <MX_PRI>(プライベートIP)
 
 dig @127.0.0.1 user1.tr.local +short
@@ -608,7 +608,7 @@ passwd user3
 
 > **🔧 仕掛けの解説①:なぜ受信SMTPには user1〜3 を作らないか**
 >
-> 受信SMTPで `user1` を作ってしまうと、Postfixは「自分のサーバに `user1` というローカルユーザーがいる」と認識する。後に `main.cf` で `mydestination = ex.entrycl.net` のように設定してしまった場合、受信SMTPが「自分でローカル配送できる」と勘違いし、メールが受信SMTPのローカル領域に保存されてしまう。
+> 受信SMTPで `user1` を作ってしまうと、Postfixは「自分のサーバに `user1` というローカルユーザーがいる」と認識する。後に `main.cf` で `mydestination = tr.ex.net` のように設定してしまった場合、受信SMTPが「自分でローカル配送できる」と勘違いし、メールが受信SMTPのローカル領域に保存されてしまう。
 >
 > ユーザーを作らないことで、「うっかり設定ミスをしても、受信SMTPはローカル配送できない」という二重の防御になる。
 
@@ -637,7 +637,7 @@ passwd user3
 #### 4-1. ホスト名の設定
 
 ```bash
-sudo hostnamectl set-hostname mx.ex.entrycl.net
+sudo hostnamectl set-hostname mx.tr.ex.net
 sudo su -
 ```
 
@@ -696,7 +696,7 @@ dig user1.tr.local +short
 
 > **🔧 仕掛けの解説②:なぜ内部DNSを優先して引くのか**
 >
-> 受信SMTPが `transport_maps` で「`user1@ex.entrycl.net` は `user1.tr.local` に渡せ」と判定したあと、`user1.tr.local` を実際にIPに解決する必要がある。`tr.local` ドメインは internal view にしか存在しないので、internal viewを返してくれるDNS(=自分の構築したDNS Primary)に問い合わせる必要がある。
+> 受信SMTPが `transport_maps` で「`user1@tr.ex.net` は `user1.tr.local` に渡せ」と判定したあと、`user1.tr.local` を実際にIPに解決する必要がある。`tr.local` ドメインは internal view にしか存在しないので、internal viewを返してくれるDNS(=自分の構築したDNS Primary)に問い合わせる必要がある。
 >
 > AWSのデフォルトDNS(VPC リゾルバ)に問い合わせても `tr.local` は解けない。
 
@@ -726,29 +726,29 @@ vi /etc/postfix/main.cf
 
 ```
 # === 受信SMTP用設定 ===
-myhostname = mx.ex.entrycl.net
-mydomain = ex.entrycl.net
+myhostname = mx.tr.ex.net
+mydomain = tr.ex.net
 myorigin = $myhostname
 
 inet_interfaces = all
 
 # 自分でローカル配送するドメインは「自分のホスト名」のみ
-# ex.entrycl.net は意図的に含めない
+# tr.ex.net は意図的に含めない
 mydestination = $myhostname, localhost
 
 # 信頼するネットワーク(リレー許可するソース)
 mynetworks = 172.31.0.0/16, 127.0.0.1
 
 # 外部からのメールでも、このドメイン宛なら受け取ってリレーしてよい
-relay_domains = ex.entrycl.net
+relay_domains = tr.ex.net
 
 # 宛先ごとの転送ルール
 transport_maps = hash:/etc/postfix/transport
 ```
 
-> **🔧 仕掛けの解説①:`mydestination` に `ex.entrycl.net` を含めない**
+> **🔧 仕掛けの解説①:`mydestination` に `tr.ex.net` を含めない**
 >
-> もし含めると、Postfixは「`user1@ex.entrycl.net` 宛のメールは自分が最終配送する」と判断し、ローカルユーザー `user1` を探そうとする。しかし受信SMTPには `user1` が存在しないので、`User unknown in local recipient table` で配送失敗する。
+> もし含めると、Postfixは「`user1@tr.ex.net` 宛のメールは自分が最終配送する」と判断し、ローカルユーザー `user1` を探そうとする。しかし受信SMTPには `user1` が存在しないので、`User unknown in local recipient table` で配送失敗する。
 >
 > `mydestination` に含めないことで、Postfixに「自分はこのドメインの最終配送先ではない」と伝えることになり、`transport_maps` の判定に処理が回ってくる。
 
@@ -756,7 +756,7 @@ transport_maps = hash:/etc/postfix/transport
 >
 > Postfixはデフォルトで「自分宛(=`mydestination`)でも、信頼ネットワーク(=`mynetworks`)でもない宛先」へのメールはリレー拒否する(オープンリレー防止)。
 >
-> 外部から来たメール `user1@ex.entrycl.net` は、`mydestination` に入っていないし、外部からの接続はmynetworksにも入っていない。**そこで `relay_domains` に `ex.entrycl.net` を入れることで、「このドメイン宛は外部からの接続でもリレーしてよい」と例外宣言する**。
+> 外部から来たメール `user1@tr.ex.net` は、`mydestination` に入っていないし、外部からの接続はmynetworksにも入っていない。**そこで `relay_domains` に `tr.ex.net` を入れることで、「このドメイン宛は外部からの接続でもリレーしてよい」と例外宣言する**。
 >
 > `relay_domains` がなければ、外部からのメールは "Relay access denied" で全部弾かれる。
 
@@ -766,7 +766,7 @@ transport_maps = hash:/etc/postfix/transport
 > - `mydestination`: 「**自分が最終配送する**」ドメイン
 > - `relay_domains`: 「**他のサーバへリレーする**」ドメイン
 >
-> 受信SMTPは `ex.entrycl.net` 宛のメールを「自分では配送せず、リレーで渡す」役割なので、`relay_domains` に入れる。配送SMTPは「自分が最終配送する」役割なので、`mydestination` に入れる(Step 5で設定)。
+> 受信SMTPは `tr.ex.net` 宛のメールを「自分では配送せず、リレーで渡す」役割なので、`relay_domains` に入れる。配送SMTPは「自分が最終配送する」役割なので、`mydestination` に入れる(Step 5で設定)。
 
 > **🔧 仕掛けの解説④:`mynetworks` に `172.31.0.0/16` を入れる理由**
 >
@@ -779,9 +779,9 @@ vi /etc/postfix/transport
 ```
 
 ```
-user1@ex.entrycl.net    smtp:[user1.tr.local]
-user2@ex.entrycl.net    smtp:[user2.tr.local]
-user3@ex.entrycl.net    smtp:[user3.tr.local]
+user1@tr.ex.net    smtp:[user1.tr.local]
+user2@tr.ex.net    smtp:[user2.tr.local]
+user3@tr.ex.net    smtp:[user3.tr.local]
 ```
 
 > **🔧 仕掛けの解説①:`[ ]` の意味**
@@ -792,9 +792,9 @@ user3@ex.entrycl.net    smtp:[user3.tr.local]
 
 > **🔧 仕掛けの解説②:`transport_maps` は「宛先書き換え」ではない**
 >
-> このマップは「宛先 `user1@ex.entrycl.net` のメールを、`user1.tr.local` というサーバにSMTPで渡せ」という**ルーティング指示**。メールヘッダの `To:` は書き換わらない。
+> このマップは「宛先 `user1@tr.ex.net` のメールを、`user1.tr.local` というサーバにSMTPで渡せ」という**ルーティング指示**。メールヘッダの `To:` は書き換わらない。
 >
-> 配送SMTP1に渡されたメールも、宛先は `user1@ex.entrycl.net` のまま。だから配送SMTP1側で `ex.entrycl.net` を `mydestination` に含めて「受け入れ準備」をしておく必要がある(Step 5)。
+> 配送SMTP1に渡されたメールも、宛先は `user1@tr.ex.net` のまま。だから配送SMTP1側で `tr.ex.net` を `mydestination` に含めて「受け入れ準備」をしておく必要がある(Step 5)。
 
 > **🤔 考えるポイント:なぜわざわざユーザーごとに別サーバに振るのか**
 >
@@ -906,8 +906,8 @@ myorigin = $myhostname
 
 inet_interfaces = all
 
-# ex.entrycl.net 宛のメールは自分が最終配送する
-mydestination = ex.entrycl.net, $myhostname, localhost
+# tr.ex.net 宛のメールは自分が最終配送する
+mydestination = tr.ex.net, $myhostname, localhost
 
 mynetworks = 172.31.0.0/16, 127.0.0.1
 
@@ -922,22 +922,22 @@ mail_spool_directory = /var/spool/mail/
 > - `mydomain` = 自分が「名乗る」ドメイン。`myhostname` のドメイン部や、`myorigin` のデフォルト値に使われる
 > - `mydestination` = 自分が「受け持つ」ドメインのリスト
 >
-> 配送SMTPでは、`mydomain = tr.local`(自分は `tr.local` ドメインのサーバ)だが、`mydestination` に `ex.entrycl.net` を入れる(`ex.entrycl.net` 宛のメールも自分が配送する)。
+> 配送SMTPでは、`mydomain = tr.local`(自分は `tr.local` ドメインのサーバ)だが、`mydestination` に `tr.ex.net` を入れる(`tr.ex.net` 宛のメールも自分が配送する)。
 >
 > 「**名乗るドメインと、受け持つドメインは違ってよい**」。これが理解の鍵。
 
-> **🔧 仕掛けの解説②:なぜ `ex.entrycl.net` を `mydestination` に入れる必要があるか**
+> **🔧 仕掛けの解説②:なぜ `tr.ex.net` を `mydestination` に入れる必要があるか**
 >
-> 受信SMTPから渡されてくるメールの宛先は `user1@ex.entrycl.net` のまま(`transport_maps` はアドレスを書き換えない)。配送SMTPが「自分はこのドメイン宛を受け取る」と宣言していないと、「他のサーバに渡してください」と Relay access denied で弾いてしまう。
+> 受信SMTPから渡されてくるメールの宛先は `user1@tr.ex.net` のまま(`transport_maps` はアドレスを書き換えない)。配送SMTPが「自分はこのドメイン宛を受け取る」と宣言していないと、「他のサーバに渡してください」と Relay access denied で弾いてしまう。
 >
-> `mydestination` に `ex.entrycl.net` を入れることで、「自分は `ex.entrycl.net` ドメインの `user1` の最終配送先である」と認識し、ローカルの `/var/spool/mail/user1/` に書き込む。
+> `mydestination` に `tr.ex.net` を入れることで、「自分は `tr.ex.net` ドメインの `user1` の最終配送先である」と認識し、ローカルの `/var/spool/mail/user1/` に書き込む。
 
 > **🤔 考えるポイント:配送SMTP1が user2 宛のメールを受けたらどうなるか**
 >
 > 設計上、受信SMTPは `transport_maps` で `user2` 宛は `user2.tr.local` に振り分けるので、配送SMTP1には届かない。
 >
 > しかし、もし手動で配送SMTP1に `user2` 宛のメールを送り込むとどうなるか?
-> - 配送SMTP1は `mydestination` に `ex.entrycl.net` を含めているので「受け取る」
+> - 配送SMTP1は `mydestination` に `tr.ex.net` を含めているので「受け取る」
 > - ローカルユーザー `user2` を探す → 存在する(Step 3で全配送SMTPに `user1〜3` を作っているため)
 > - `/var/spool/mail/user2/` に書き込む(NFS共有なので他サーバとも共有される)
 >
@@ -1073,10 +1073,10 @@ df -h
 #### 内部から(配送SMTP1 などで実施)
 
 ```bash
-dig ex.entrycl.net mx +short
-# 期待: 10 mx.ex.entrycl.net.
+dig tr.ex.net mx +short
+# 期待: 10 mx.tr.ex.net.
 
-dig mx.ex.entrycl.net +short
+dig mx.tr.ex.net +short
 # 期待: <MX_PRI>(プライベートIP)
 
 dig user1.tr.local +short
@@ -1086,7 +1086,7 @@ dig user1.tr.local +short
 #### 外部から(自分のPC等で実施)
 
 ```bash
-dig @<DNS_PUB> mx.ex.entrycl.net +short
+dig @<DNS_PUB> mx.tr.ex.net +short
 # 期待: <MX_PUB>(グローバルIP)
 
 dig @<DNS_PUB> user1.tr.local
@@ -1110,11 +1110,11 @@ telnet <MX_PRI> 25
 ```
 EHLO test.example.com
 MAIL FROM:<sender@example.com>
-RCPT TO:<user1@ex.entrycl.net>
+RCPT TO:<user1@tr.ex.net>
 DATA
 Subject: Test mail to user1
 From: sender@example.com
-To: user1@ex.entrycl.net
+To: user1@tr.ex.net
 
 This is a test message for user1.
 .
@@ -1136,11 +1136,11 @@ cat /var/spool/mail/user1/new/*
 ```bash
 # 受信SMTPで
 tail -f /var/log/maillog
-# → smtp ... to=<user1@ex.entrycl.net>, relay=user1.tr.local[<D1_PRI>]:25, ... status=sent
+# → smtp ... to=<user1@tr.ex.net>, relay=user1.tr.local[<D1_PRI>]:25, ... status=sent
 
 # 配送SMTP1で
 tail -f /var/log/maillog
-# → local ... to=<user1@ex.entrycl.net>, relay=local, ... status=sent (delivered to maildir)
+# → local ... to=<user1@tr.ex.net>, relay=local, ... status=sent (delivered to maildir)
 ```
 
 ---
@@ -1239,14 +1239,14 @@ nc -zv user1.tr.local 25
 
 #### エラー④: 受信SMTPで `Relay access denied` が出る
 
-**原因:** `relay_domains` に `ex.entrycl.net` が含まれていない、または `postmap` 実行忘れ。
+**原因:** `relay_domains` に `tr.ex.net` が含まれていない、または `postmap` 実行忘れ。
 
 **対処法:**
 
 ```bash
 # 受信SMTPで設定確認
 postconf relay_domains
-# ex.entrycl.net が表示されればOK
+# tr.ex.net が表示されればOK
 
 postmap /etc/postfix/transport
 systemctl restart postfix
@@ -1324,7 +1324,7 @@ ls -ln /var/spool/mail/
 | 配送SMTP1 プライベートIP `<D1_PRI>` | `xx.xx.xx.xx` | internal view の `user1.tr.local` Aレコード |
 | 配送SMTP2 プライベートIP `<D2_PRI>` | `xx.xx.xx.xx` | internal view の `user2.tr.local` Aレコード |
 | 配送SMTP3 プライベートIP `<D3_PRI>` | `xx.xx.xx.xx` | internal view の `user3.tr.local` Aレコード |
-| 外部ドメイン | `ex.entrycl.net` | 公開メールアドレスのドメイン |
+| 外部ドメイン | `tr.ex.net` | 公開メールアドレスのドメイン |
 | 内部ドメイン | `tr.local` | サーバ間通信用ドメイン |
 | メールユーザー | `user1, user2, user3` | UID = 2001, 2002, 2003 で統一 |
 
