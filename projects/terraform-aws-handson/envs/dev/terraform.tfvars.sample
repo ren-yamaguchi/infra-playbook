@@ -1,0 +1,81 @@
+# 下記はweb, ap, dbと異なる EC2 に対してそれぞれ別の security group を付与する時の terraform.ftvars の例です
+
+project_name    = "handson"
+environment     = "dev"
+
+key_pair_name   = "your-key-name"      # ← 自分のキーペア名に書き換え
+common_ssh_cidr = "x.x.x.x/32"         # ← 自分のグローバルIP/32
+
+# ===== Additional Security Groups =====
+security_groups = {
+  "web" = {
+    description = "Web tier: nginx (HTTP/HTTPS)"
+    ingress_rules = [
+      {
+        description = "HTTP from my IP"
+        from_port   = 80
+        to_port     = 80
+        protocol    = "tcp"
+        cidr_blocks = ["x.x.x.x/32"]   # ← 自分のIP(common_ssh_cidr と同じ)
+      },
+      {
+        description = "HTTPS from my IP"
+        from_port   = 443
+        to_port     = 443
+        protocol    = "tcp"
+        cidr_blocks = ["x.x.x.x/32"]   # ← 自分のIP
+      }
+    ]
+  }
+
+  "ap" = {
+    description = "AP tier: Tomcat from VPC"
+    ingress_rules = [
+      {
+        description = "Tomcat 8080 from VPC"
+        from_port   = 8080
+        to_port     = 8080
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/16"]
+      }
+    ]
+  }
+
+  "db" = {
+    description = "DB tier: PostgreSQL from VPC"
+    ingress_rules = [
+      {
+        description = "PostgreSQL 5432 from VPC"
+        from_port   = 5432
+        to_port     = 5432
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/16"]
+      }
+    ]
+  }
+}
+
+# ===== EC2 instances =====
+instances = {
+  "ec2-web" = {
+    instance_type       = "t3.micro"
+    subnet_name         = "public-a"
+    security_group_ids  = ["common", "web"]
+    associate_public_ip = true
+  }
+  "ec2-ap" = {
+    instance_type       = "t3.small"          # Tomcatはやや余裕を持って
+    subnet_name         = "public-a"
+    security_group_ids  = ["common", "ap"]
+    associate_public_ip = true
+  }
+  "ec2-db" = {
+    instance_type       = "t3.small"          # DBもメモリ多めで
+    subnet_name         = "public-a"
+    security_group_ids  = ["common", "db"]
+    associate_public_ip = true
+  }
+}
+
+enable_nat = false
+enable_alb = false
