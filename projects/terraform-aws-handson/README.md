@@ -1108,14 +1108,20 @@ variable "security_group_ids" {
 #### main.tf
 
 ```hcl
-# Latest Amazon Linux 2023 AMI
+# Amazon Linux 2023 AMI from EC2 describe-images.
+# owners is set to the official Amazon Linux account ID (137112412989) for safety.
 data "aws_ami" "al2023" {
   most_recent = true
-  owners      = ["amazon"]
+  owners      = ["137112412989"]
 
   filter {
     name   = "name"
-    values = ["al2023-ami-2023.*-x86_64"]
+    values = ["al2023-ami-2023*-x86_64"]
+  }
+
+  filter {
+    name   = "is-public"
+    values = ["true"]
   }
 }
 
