@@ -54,3 +54,4 @@ module "alb" {
   public_subnet_ids   = values(module.network.public_subnet_ids)
   target_instance_ids = [for name in var.alb_target_instances : module.compute.instance_ids[name]]
   allowed_cidr        = var.alb_allowed_cidr
+}
