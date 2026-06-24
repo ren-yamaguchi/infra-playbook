@@ -1,18 +1,13 @@
-# Latest Amazon Linux 2023 AMI
-data "aws_ami" "al2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-2023.*-x86_64"]
-  }
+# Latest Amazon Linux 2023 AMI from SSM Parameter Store
+# Same AMI as shown in the EC2 quick start.
+data "aws_ssm_parameter" "al2023_ami" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
 resource "aws_instance" "this" {
   for_each = var.instances
 
-  ami                         = data.aws_ami.al2023.id
+  ami                         = data.aws_ssm_parameter.al2023_ami.value
   instance_type               = each.value.instance_type
   key_name                    = var.key_pair_name
   subnet_id                   = var.subnet_ids[each.value.subnet_name]
