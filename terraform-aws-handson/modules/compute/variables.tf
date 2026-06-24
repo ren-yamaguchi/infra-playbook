@@ -1,12 +1,22 @@
 variable "name_prefix" { type = string }
-variable "vpc_id" { type = string }
-variable "subnet_ids" { type = list(string) }
-variable "associate_public_ip" { type = bool }
-variable "instance_type" { type = string }
-variable "instance_count" { type = number }
 variable "key_pair_name" { type = string }
 
-variable "allowed_ssh_cidr" {
-  type    = string
-  default = ""
+# Instance definitions, keyed by server name.
+variable "instances" {
+  type = map(object({
+    instance_type       = string
+    subnet_name         = string         # key in subnet_ids map (e.g. "public-a")
+    security_group_ids  = list(string)   # SG names (e.g. ["common", "web"])
+    associate_public_ip = optional(bool, false)
+  }))
+}
+
+# Subnet name -> subnet ID (passed in from network module)
+variable "subnet_ids" {
+  type = map(string)
+}
+
+# SG name -> SG ID (passed in from security module)
+variable "security_group_ids" {
+  type = map(string)
 }

@@ -1,6 +1,8 @@
 # Terraform で学ぶ AWS 環境構築ハンズオン手順書
 
-VPC + EC2(複数台対応)の最小構成を出発点に、必要に応じて **ALB / NAT Gateway** も追加できるよう module 化した、Terraform 学習用の手順書です。
+ミドルウェア(MW)構築・検証用の汎用 AWS 基盤を、Terraform で組み立てるための手順書です。
+VPC ・ EC2 ・ Security Group を中心に、必要に応じて **ALB / NAT Gateway** も追加できるよう module 化しています。
+インスタンスは素の Amazon Linux 2023 として起動するため、SSH 接続後に任意のミドルウェアを自由に検証できます。
 ローカル PC(Ubuntu)から AWS(東京リージョン)に対して構築します。
 
 ---
@@ -66,15 +68,15 @@ VPC + EC2(複数台対応)の最小構成を出発点に、必要に応じて **
 
 ### 1.4 構成バリエーション(本手順書で切替可能)
 
-`envs/dev` で module の呼び出し有無と変数を変えるだけで、以下のパターンを作れます。
+`envs/dev/terraform.tfvars` の中身を変えるだけで、以下のような構成を自由に作れます(MW検証基盤として汎用的に使える構造になっています)。
 
-| パターン | network | compute (public) | compute (private) | nat | alb |
-| --- | --- | --- | --- | --- | --- |
-| ①最小構成 | ○ | ○ |  |  |  |
-| ②ALB付き | ○ | ○ |  |  | ○ |
-| ③本番似(推奨) | ○ |  | ○ | ○ | ○ |
+| パターン例 | EC2配置 | SG構成 | NAT | ALB |
+| --- | --- | --- | --- | --- |
+| ① 最小(SSHだけ確認) | public 1台 | common のみ | × | × |
+| ② Web/AP/DB混合 | public + private | common + web + db | ○(privateの外向きのため) | ○ |
+| ③ VPC + SGだけ事前構築 | EC2なし(`instances = {}`) | common + 任意SG | × | × |
 
-> ③が最も実務に近い構成。学習が進んだら③に挑戦してみてください。
+> 各 EC2 は **インスタンスごとに subnet と SG を個別指定**できる(`for_each`ベース)ので、上記以外の組み合わせも自由です。例: 「Aサーバはpublicでweb SG、BサーバはprivateでdbSG」など。
 
 ### 1.5 リージョン変更について
 
@@ -296,7 +298,7 @@ EC2 インスタンスに SSH 接続するための鍵を、東京リージョ�
 | 項目 | 設定値 |
 | --- | --- |
 | 名前 | `handson-key`(任意。Terraform で参照する名前) |
-| キーペアのタイプ | RSA |
+| キーペアのタイプ | ED25519 |
 | プライベートキーファイル形式 | **.pem**(Linux/Mac 用) |
 
 5. **「キーペアを作成」** → `handson-key.pem` が自動でダウンロードされる
@@ -399,9 +401,10 @@ terraform-aws-handson/
 │       └── versions.tf
 ├── modules/
 │   ├── network/             # VPC, Subnet, IGW, Route Table
-│   ├── compute/             # EC2, Security Group
-│   ├── alb/                 # ALB, Target Group, Listener  ← 別module
-│   └── nat/                 # NAT Gateway, EIP, Route        ← 別module
+│   ├── security/            # Security Groups (common + user-defined)
+│   ├── compute/             # EC2 (for_each based)
+│   ├── alb/                 # ALB, Target Group, Listener (optional)
+│   └── nat/                 # NAT Gateway, EIP, Route (optional)
 ├── .gitignore
 └── README.md
 ```
@@ -427,7 +430,7 @@ crash.log
 ディレクトリは以下のコマンドで一気に作れます。
 
 ```bash
-mkdir -p terraform-aws-handson/{envs/dev,modules/{network,compute,alb,nat}}
+mkdir -p terraform-aws-handson/{envs/dev,modules/{network,security,compute,alb,nat}}
 cd terraform-aws-handson
 ```
 
@@ -510,48 +513,58 @@ variable "private_subnet_cidrs" {
 }
 
 # AZs are auto-detected in network module by default.
-# Override here only if needed.
 variable "availability_zones" {
   description = "Explicit AZ list. Empty means auto-detect first 2 AZs in the region."
   type        = list(string)
   default     = []
 }
 
-# ===== EC2 =====
-variable "instance_type" {
-  type    = string
-  default = "t3.micro"
-}
-
-variable "instance_count" {
-  type    = number
-  default = 2
-}
-
+# ===== EC2 / KeyPair =====
 variable "key_pair_name" {
   type = string
 }
 
-variable "allowed_ssh_cidr" {
-  description = "CIDR allowed to SSH (used when EC2 is in public subnet). Empty means no SSH ingress."
+# ===== Security Groups =====
+# common SG always created (SSH only). CIDR is configurable.
+variable "common_ssh_cidr" {
+  description = "CIDR allowed to SSH(22) on common SG"
   type        = string
   default     = ""
 }
 
-variable "ec2_subnet_type" {
-  description = "Where to place EC2: public or private"
-  type        = string
-  default     = "public"
+# Additional SGs (optional). Each SG can have multiple ingress rules.
+# egress is implicitly 0.0.0.0/0 on all SGs.
+variable "security_groups" {
+  description = "Map of additional security groups keyed by SG name"
+  type = map(object({
+    description = string
+    ingress_rules = list(object({
+      description = string
+      from_port   = number
+      to_port     = number
+      protocol    = string
+      cidr_blocks = list(string)
+    }))
+  }))
+  default = {}
+}
 
-  validation {
-    condition     = contains(["public", "private"], var.ec2_subnet_type)
-    error_message = "ec2_subnet_type must be 'public' or 'private'."
-  }
+# ===== EC2 instances =====
+# Keyed by server name. Empty map means no EC2 will be created.
+variable "instances" {
+  description = "Map of EC2 instances keyed by server name"
+  type = map(object({
+    instance_type      = string
+    subnet_name        = string         # subnet name from network module outputs (e.g. "public-a", "private-c")
+    security_group_ids = list(string)   # SG names (e.g. ["common", "web"])
+    associate_public_ip = optional(bool, false)
+  }))
+  default = {}
 }
 
 # ===== Feature toggles =====
 variable "enable_nat" {
-  description = "Create NAT Gateway. Required when ec2_subnet_type=private."
+  description = "Create NAT Gateway"
   type        = bool
   default     = false
 }
@@ -560,6 +573,12 @@ variable "enable_alb" {
   description = "Create ALB"
   type        = bool
   default     = false
+}
+
+variable "alb_target_instances" {
+  description = "Instance names (from var.instances keys) to attach to ALB target group"
+  type        = list(string)
+  default     = []
 }
 
 variable "alb_allowed_cidr" {
@@ -571,30 +590,60 @@ variable "alb_allowed_cidr" {
 
 ### 5.4 `envs/dev/terraform.tfvars`(自分用の値)
 
-**※ Git にコミットしない。**
+Git にコミットしない。
 
 ```hcl
-project_name     = "handson"
-environment      = "dev"
+project_name    = "handson"
+environment     = "dev"
 
-key_pair_name    = "my-keypair-name"   # your key pair name
-allowed_ssh_cidr = "203.0.113.10/32"   # your global IP/32
-instance_count   = 2
+# Your EC2 key pair name (created in target region)
+key_pair_name   = "your-key-name"
 
-# Pattern 1: minimal
-ec2_subnet_type = "public"
-enable_nat      = false
-enable_alb      = false
+# CIDR allowed to SSH(22) on the common SG.
+# Replace x.x.x.x/32 with your global IP (curl https://checkip.amazonaws.com)
+common_ssh_cidr = "x.x.x.x/32"
 
-# Pattern 2: with ALB (EC2 still public)
-# ec2_subnet_type = "public"
-# enable_nat      = false
-# enable_alb      = true
+# ===== Additional Security Groups (optional) =====
+# Define any number of SGs. Each SG can have multiple ingress rules.
+# Each EC2 instance can be attached to one or more SGs by name.
+security_groups = {
+  # Example: Web tier (HTTP / HTTPS open to internet)
+  # "web" = {
+  #   description = "Web tier"
+  #   ingress_rules = [
+  #     { description = "HTTP",  from_port = 80,  to_port = 80,  protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] },
+  #     { description = "HTTPS", from_port = 443, to_port = 443, protocol = "tcp", cidr_blocks = ["0.0.0.0/0"] }
+  #   ]
+  # }
 
-# Pattern 3: production-like (EC2 in private, NAT + ALB)
-# ec2_subnet_type = "private"
-# enable_nat      = true
-# enable_alb      = true
+  # Example: DB tier (PostgreSQL from VPC only)
+  # "db" = {
+  #   description = "DB tier"
+  #   ingress_rules = [
+  #     { description = "PostgreSQL from VPC", from_port = 5432, to_port = 5432, protocol = "tcp", cidr_blocks = ["10.0.0.0/16"] }
+  #   ]
+  # }
+}
+
+# ===== EC2 instances (map keyed by server name) =====
+# Empty {} means no EC2 will be created.
+# subnet_name: "public-a", "public-c", "private-a", "private-c" etc.
+#              (see network module outputs)
+# security_group_ids: list of SG names. "common" is always available.
+instances = {
+  "server-01" = {
+    instance_type       = "t3.micro"
+    subnet_name         = "public-a"
+    security_group_ids  = ["common"]
+    associate_public_ip = true
+  }
+}
+
+# ===== Feature toggles =====
+enable_nat = false
+enable_alb = false
+
+# alb_target_instances = ["server-01"]   # required when enable_alb = true
 ```
 
 > 自分のグローバル IP は以下で確認できます。
@@ -609,9 +658,6 @@ enable_alb      = false
 ```hcl
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
-
-  # Subnet IDs where EC2 instances will be placed
-  ec2_subnet_ids = var.ec2_subnet_type == "public" ? module.network.public_subnet_ids : module.network.private_subnet_ids
 }
 
 # ===== network (always) =====
@@ -622,7 +668,7 @@ module "network" {
   vpc_cidr             = var.vpc_cidr
   public_subnet_cidrs  = var.public_subnet_cidrs
   private_subnet_cidrs = var.private_subnet_cidrs
-  availability_zones   = var.availability_zones  # empty => auto-detect in module
+  availability_zones   = var.availability_zones
 }
 
 # ===== NAT (optional) =====
@@ -631,22 +677,29 @@ module "nat" {
   count  = var.enable_nat ? 1 : 0
 
   name_prefix            = local.name_prefix
-  public_subnet_id       = module.network.public_subnet_ids[0]
+  public_subnet_id       = values(module.network.public_subnet_ids)[0]
   private_route_table_id = module.network.private_route_table_id
 }
 
-# ===== EC2 =====
+# ===== Security Groups (always; "common" always created) =====
+module "security" {
+  source = "../../modules/security"
+
+  name_prefix      = local.name_prefix
+  vpc_id           = module.network.vpc_id
+  common_ssh_cidr  = var.common_ssh_cidr
+  security_groups  = var.security_groups
+}
+
+# ===== EC2 (for_each based) =====
 module "compute" {
   source = "../../modules/compute"
 
-  name_prefix         = local.name_prefix
-  vpc_id              = module.network.vpc_id
-  subnet_ids          = local.ec2_subnet_ids
-  associate_public_ip = var.ec2_subnet_type == "public"
-  instance_type       = var.instance_type
-  instance_count      = var.instance_count
-  key_pair_name       = var.key_pair_name
-  allowed_ssh_cidr    = var.allowed_ssh_cidr
+  name_prefix       = local.name_prefix
+  key_pair_name     = var.key_pair_name
+  instances         = var.instances
+  subnet_ids        = module.network.subnet_ids        # map keyed by subnet name
+  security_group_ids = module.security.security_group_ids  # map keyed by SG name
 }
 
 # ===== ALB (optional) =====
@@ -656,8 +709,8 @@ module "alb" {
 
   name_prefix         = local.name_prefix
   vpc_id              = module.network.vpc_id
-  public_subnet_ids   = module.network.public_subnet_ids
-  target_instance_ids = module.compute.instance_ids
+  public_subnet_ids   = values(module.network.public_subnet_ids)
+  target_instance_ids = [for name in var.alb_target_instances : module.compute.instance_ids[name]]
   allowed_cidr        = var.alb_allowed_cidr
 }
 ```
@@ -671,26 +724,38 @@ output "vpc_id" {
   value = module.network.vpc_id
 }
 
-output "ec2_subnet_type" {
-  value = var.ec2_subnet_type
+output "subnet_ids" {
+  description = "All subnet IDs (map keyed by subnet name)"
+  value       = module.network.subnet_ids
 }
 
-output "ec2_public_ips" {
-  description = "Public IPs (valid when EC2 is in public subnet)"
+output "security_group_ids" {
+  description = "All SG IDs (map keyed by SG name)"
+  value       = module.security.security_group_ids
+}
+
+output "instance_ids" {
+  description = "EC2 instance IDs keyed by server name"
+  value       = module.compute.instance_ids
+}
+
+output "public_ips" {
+  description = "EC2 public IPs keyed by server name (empty if not public)"
   value       = module.compute.public_ips
 }
 
-output "ec2_private_ips" {
-  value = module.compute.private_ips
+output "private_ips" {
+  description = "EC2 private IPs keyed by server name"
+  value       = module.compute.private_ips
+}
+
+output "ssh_commands" {
+  description = "SSH command examples keyed by server name (only for public instances)"
+  value       = module.compute.ssh_commands
 }
 
 output "alb_dns_name" {
   value = var.enable_alb ? module.alb[0].dns_name : null
-}
-
-output "ssh_commands" {
-  description = "SSH command examples (shown only when EC2 is public)"
-  value       = var.ec2_subnet_type == "public" ? module.compute.ssh_commands : []
 }
 ```
 
@@ -724,6 +789,9 @@ data "aws_availability_zones" "available" {
 locals {
   # Use explicit AZs if given, otherwise first 2 auto-detected AZs
   azs = length(var.availability_zones) > 0 ? var.availability_zones : slice(data.aws_availability_zones.available.names, 0, 2)
+
+  # Short suffix for AZ (e.g. "ap-northeast-1a" -> "a"). Used as subnet name suffix.
+  az_suffixes = [for az in local.azs : substr(az, length(az) - 1, 1)]
 }
 
 # VPC
@@ -750,7 +818,7 @@ resource "aws_subnet" "public" {
   availability_zone       = local.azs[count.index]
   map_public_ip_on_launch = true
 
-  tags = { Name = "${var.name_prefix}-public-${local.azs[count.index]}" }
+  tags = { Name = "${var.name_prefix}-public-${local.az_suffixes[count.index]}" }
 }
 
 # Private Subnets
@@ -761,7 +829,7 @@ resource "aws_subnet" "private" {
   cidr_block        = var.private_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = { Name = "${var.name_prefix}-private-${local.azs[count.index]}" }
+  tags = { Name = "${var.name_prefix}-private-${local.az_suffixes[count.index]}" }
 }
 
 # Public Route Table
@@ -804,14 +872,139 @@ resource "aws_route_table_association" "private" {
 
 ```hcl
 output "vpc_id" { value = aws_vpc.this.id }
-output "public_subnet_ids" { value = aws_subnet.public[*].id }
-output "private_subnet_ids" { value = aws_subnet.private[*].id }
+
+# Subnet IDs as a flat map keyed by "<type>-<az_suffix>" (e.g. "public-a", "private-c").
+# This lets EC2 instances reference subnets by name.
+output "subnet_ids" {
+  value = merge(
+    { for i, s in aws_subnet.public : "public-${substr(s.availability_zone, length(s.availability_zone) - 1, 1)}" => s.id },
+    { for i, s in aws_subnet.private : "private-${substr(s.availability_zone, length(s.availability_zone) - 1, 1)}" => s.id },
+  )
+}
+
+# Convenience: keyed maps for public/private only
+output "public_subnet_ids" {
+  value = { for s in aws_subnet.public : "public-${substr(s.availability_zone, length(s.availability_zone) - 1, 1)}" => s.id }
+}
+
+output "private_subnet_ids" {
+  value = { for s in aws_subnet.private : "private-${substr(s.availability_zone, length(s.availability_zone) - 1, 1)}" => s.id }
+}
+
 output "private_route_table_id" { value = aws_route_table.private.id }
 ```
 
 ---
 
-### 5.8 `modules/nat`
+### 5.8 `modules/security`
+
+検証基盤として「複数SG × 複数ルール」を柔軟に定義できるようにします。`common` SG(SSH 22 のみ許可)は常に作成、それ以外の SG は `security_groups` 変数の map で受け取って動的に作成します。egress は全 SG で `0.0.0.0/0` 全許可をデフォルトで付与します。
+
+#### variables.tf
+
+```hcl
+variable "name_prefix" { type = string }
+variable "vpc_id" { type = string }
+
+variable "common_ssh_cidr" {
+  description = "CIDR allowed to SSH(22) on the common SG. Empty disables SSH ingress."
+  type        = string
+  default     = ""
+}
+
+variable "security_groups" {
+  description = "Additional SGs to create. Keyed by SG name."
+  type = map(object({
+    description = string
+    ingress_rules = list(object({
+      description = string
+      from_port   = number
+      to_port     = number
+      protocol    = string
+      cidr_blocks = list(string)
+    }))
+  }))
+  default = {}
+}
+```
+
+#### main.tf
+
+```hcl
+# Common SG: SSH only (always created)
+resource "aws_security_group" "common" {
+  name        = "${var.name_prefix}-common-sg"
+  description = "Common SG: SSH"
+  vpc_id      = var.vpc_id
+
+  dynamic "ingress" {
+    for_each = var.common_ssh_cidr != "" ? [1] : []
+    content {
+      description = "SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = [var.common_ssh_cidr]
+    }
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { Name = "${var.name_prefix}-common-sg" }
+}
+
+# Additional SGs (for_each map)
+resource "aws_security_group" "extra" {
+  for_each = var.security_groups
+
+  name        = "${var.name_prefix}-${each.key}-sg"
+  description = each.value.description
+  vpc_id      = var.vpc_id
+
+  dynamic "ingress" {
+    for_each = each.value.ingress_rules
+    content {
+      description = ingress.value.description
+      from_port   = ingress.value.from_port
+      to_port     = ingress.value.to_port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidr_blocks
+    }
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { Name = "${var.name_prefix}-${each.key}-sg" }
+}
+```
+
+#### outputs.tf
+
+```hcl
+# Map keyed by SG name: "common", plus each user-defined SG name.
+output "security_group_ids" {
+  value = merge(
+    { "common" = aws_security_group.common.id },
+    { for k, sg in aws_security_group.extra : k => sg.id },
+  )
+}
+```
+
+---
+
+### 5.9 `modules/nat`
 
 #### variables.tf
 
@@ -846,7 +1039,7 @@ resource "aws_route" "private_to_nat" {
 }
 ```
 
-> **コスト注意**: NAT Gateway は **1 時間あたり約 $0.062 + データ転送料金**がかかります(東京)。学習が終わったら必ず `destroy` してください。
+> **コスト注意**： NAT Gateway は **1 時間あたり約 $0.062 + データ転送料金**がかかります(東京)。学習が終わったら必ず `destroy` してください。
 
 #### outputs.tf
 
@@ -856,22 +1049,36 @@ output "nat_gateway_id" { value = aws_nat_gateway.this.id }
 
 ---
 
-### 5.9 `modules/compute`
+### 5.10 `modules/compute`
+
+`for_each` ベースでサーバーごとに個別のサブネット・SG・インスタンスタイプを指定できる構成です。SG は名前(`"common"` や `"web"` など)で受け取り、security module の出力 map から実 SG ID に解決します。サブネットも同じ仕組み(名前ベース)で network module の `subnet_ids` map から解決します。
+
+`user_data` は持ちません。インスタンスは素の Amazon Linux 2023 として起動します。
 
 #### variables.tf
 
 ```hcl
 variable "name_prefix" { type = string }
-variable "vpc_id" { type = string }
-variable "subnet_ids" { type = list(string) }
-variable "associate_public_ip" { type = bool }
-variable "instance_type" { type = string }
-variable "instance_count" { type = number }
 variable "key_pair_name" { type = string }
 
-variable "allowed_ssh_cidr" {
-  type    = string
-  default = ""
+# Instance definitions, keyed by server name.
+variable "instances" {
+  type = map(object({
+    instance_type       = string
+    subnet_name         = string         # key in subnet_ids map (e.g. "public-a")
+    security_group_ids  = list(string)   # SG names (e.g. ["common", "web"])
+    associate_public_ip = optional(bool, false)
+  }))
+}
+
+# Subnet name -> subnet ID (passed in from network module)
+variable "subnet_ids" {
+  type = map(string)
+}
+
+# SG name -> SG ID (passed in from security module)
+variable "security_group_ids" {
+  type = map(string)
 }
 ```
 
@@ -889,84 +1096,50 @@ data "aws_ami" "al2023" {
   }
 }
 
-# Security Group for EC2
-resource "aws_security_group" "ec2" {
-  name        = "${var.name_prefix}-ec2-sg"
-  description = "Security group for EC2"
-  vpc_id      = var.vpc_id
-
-  # Allow SSH only when allowed_ssh_cidr is set
-  dynamic "ingress" {
-    for_each = var.allowed_ssh_cidr != "" ? [1] : []
-    content {
-      description = "SSH"
-      from_port   = 22
-      to_port     = 22
-      protocol    = "tcp"
-      cidr_blocks = [var.allowed_ssh_cidr]
-    }
-  }
-
-  # HTTP from inside the VPC only (ALB health check / internal access)
-  ingress {
-    description = "HTTP from VPC"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.name_prefix}-ec2-sg" }
-}
-
-# EC2
 resource "aws_instance" "this" {
-  count = var.instance_count
+  for_each = var.instances
 
   ami                         = data.aws_ami.al2023.id
-  instance_type               = var.instance_type
+  instance_type               = each.value.instance_type
   key_name                    = var.key_pair_name
-  subnet_id                   = var.subnet_ids[count.index % length(var.subnet_ids)]
-  vpc_security_group_ids      = [aws_security_group.ec2.id]
-  associate_public_ip_address = var.associate_public_ip
+  subnet_id                   = var.subnet_ids[each.value.subnet_name]
+  vpc_security_group_ids      = [for name in each.value.security_group_ids : var.security_group_ids[name]]
+  associate_public_ip_address = each.value.associate_public_ip
 
-  # Install nginx for ALB health check / smoke test
-  user_data = <<-EOF
-              #!/bin/bash
-              dnf install -y nginx
-              echo "Hello from $(hostname)" > /usr/share/nginx/html/index.html
-              systemctl enable --now nginx
-              EOF
+  # No user_data: ship as a clean Amazon Linux 2023 instance for MW verification.
 
-  tags = { Name = "${var.name_prefix}-ec2-${format("%02d", count.index + 1)}" }
+  tags = { Name = "${var.name_prefix}-${each.key}" }
 }
 ```
 
 #### outputs.tf
 
 ```hcl
-output "instance_ids" { value = aws_instance.this[*].id }
-output "public_ips" { value = aws_instance.this[*].public_ip }
-output "private_ips" { value = aws_instance.this[*].private_ip }
+# Maps keyed by server name (matches keys of var.instances)
+output "instance_ids" {
+  value = { for k, i in aws_instance.this : k => i.id }
+}
+
+output "public_ips" {
+  value = { for k, i in aws_instance.this : k => i.public_ip if i.public_ip != "" }
+}
+
+output "private_ips" {
+  value = { for k, i in aws_instance.this : k => i.private_ip }
+}
 
 output "ssh_commands" {
-  value = [
-    for i in aws_instance.this :
-    "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${i.public_ip}"
-  ]
+  value = {
+    for k, i in aws_instance.this :
+    k => "ssh -i ~/.ssh/${var.key_pair_name}.pem ec2-user@${i.public_ip}"
+    if i.public_ip != ""
+  }
 }
 ```
 
 ---
 
-### 5.10 `modules/alb`
+### 5.11 `modules/alb`
 
 #### variables.tf
 
@@ -1150,46 +1323,87 @@ terraform plan
 terraform apply   # yes
 ```
 
-### パターンごとの apply 例
+### 構成パターンの例
 
-#### パターン①最小構成
+#### パターン① 最小構成(SSH接続のみ / public EC2 1台)
 
 ```hcl
 # terraform.tfvars
-ec2_subnet_type = "public"
-enable_nat      = false
-enable_alb      = false
+key_pair_name   = "your-key-name"
+common_ssh_cidr = "x.x.x.x/32"
+
+security_groups = {}
+
+instances = {
+  "server-01" = {
+    instance_type       = "t3.micro"
+    subnet_name         = "public-a"
+    security_group_ids  = ["common"]
+    associate_public_ip = true
+  }
+}
+
+enable_nat = false
+enable_alb = false
 ```
 
-#### パターン②ALB 付き(EC2 はまだ public)
+#### パターン② ALB + Web/AP/DB 検証(混合構成)
 
 ```hcl
-ec2_subnet_type = "public"
-enable_nat      = false
-enable_alb      = true
+security_groups = {
+  "web" = {
+    description = "Web tier"
+    ingress_rules = [
+      { description = "HTTP from VPC", from_port = 80, to_port = 80, protocol = "tcp", cidr_blocks = ["10.0.0.0/16"] }
+    ]
+  }
+  "db" = {
+    description = "DB tier"
+    ingress_rules = [
+      { description = "PostgreSQL from VPC", from_port = 5432, to_port = 5432, protocol = "tcp", cidr_blocks = ["10.0.0.0/16"] }
+    ]
+  }
+}
+
+instances = {
+  "web-01" = {
+    instance_type       = "t3.micro"
+    subnet_name         = "public-a"
+    security_group_ids  = ["common", "web"]
+    associate_public_ip = true
+  }
+  "db-01" = {
+    instance_type       = "t3.small"
+    subnet_name         = "private-a"
+    security_group_ids  = ["common", "db"]
+  }
+}
+
+enable_nat            = true        # required for private subnet outbound
+enable_alb            = true
+alb_target_instances  = ["web-01"]
 ```
 
-#### パターン③本番似(EC2 を private に移動)
+> パターン② のように一部 EC2 を private に置くと、その EC2 は SSH 接続のためには踏み台 or SSM Session Manager が別途必要です(common SG の SSH ingress は CIDR 制限がかかるため、踏み台SGを定義して紐づける運用が一般的)。
 
-```hcl
-ec2_subnet_type  = "private"
-enable_nat       = true
-enable_alb       = true
-allowed_ssh_cidr = ""    # private, no SSH ingress (need bastion or SSM Session Manager)
-```
-
-> パターン③に変更すると EC2 は**再作成**されます。`plan` で必ず確認。
+> `instances = {}` にすれば EC2 は1台も作成されません。検証で「VPC とSGだけ事前に作っておきたい」というユースケースにも使えます。
 
 ---
 
 ## 9. 動作確認(SSH 接続 / ALB アクセス)
 
-### 9.1 SSH 接続(EC2 が public のとき)
+### 9.1 SSH 接続
+
+`ssh_commands` output が「サーバー名 → SSH コマンド」の map になっているので、サーバー名で引きます。
 
 ```bash
-chmod 400 ~/.ssh/my-keypair-name.pem
-# terraform output ssh_commands で表示されたコマンドを使う
-ssh -i ~/.ssh/my-keypair-name.pem ec2-user@<public_ip>
+# 全サーバーのSSHコマンド一覧
+terraform output ssh_commands
+
+# 特定サーバーだけ取得して接続
+terraform output -raw -json ssh_commands | jq -r '.["server-01"]'
+# またはそのまま表示されたコマンドをコピペ
+ssh -i ~/.ssh/your-key-name.pem ec2-user@<public_ip>
 ```
 
 > Amazon Linux 2023 のデフォルトユーザーは `ec2-user`。
@@ -1201,19 +1415,22 @@ terraform output alb_dns_name
 # 例: handson-dev-alb-1234567890.ap-northeast-1.elb.amazonaws.com
 
 curl http://$(terraform output -raw alb_dns_name)
-# → Hello from ip-10-0-x-x  などが返ってくれば成功
 ```
 
-数回叩くと EC2 が分散されることが確認できます(`hostname` が変わる)。
+> **本手順書のEC2は素の Amazon Linux 2023 です**(nginx などはインストールしていません)。ALB のヘルスチェックを通すには、SSH で接続してから Web サーバ(nginx / Apache 等)を自分でインストールしてください。例:
+> ```bash
+> sudo dnf install -y nginx
+> echo "Hello from $(hostname)" | sudo tee /usr/share/nginx/html/index.html
+> sudo systemctl enable --now nginx
+> ```
+> Web サーバが 80 番で待ち受け、ALB の SG(80番許可)と EC2 側 SG(VPC内80番許可)が揃って、ようやく ALB 経由でアクセスできるようになります。
 
 ### 9.3 private 配置時の SSH(参考)
 
-EC2 を private に置くと直接 SSH できません。実務では以下のいずれかを使います。
+EC2 を private subnet(`subnet_name = "private-a"` 等)に置くと直接 SSH できません。実務では以下のいずれかを使います。
 
 - **AWS Systems Manager Session Manager**(踏み台不要、おすすめ)
 - 踏み台 EC2(public に置く)経由で SSH
-
-学習段階では一旦 public に戻して確認するのが楽です。
 
 ---
 
@@ -1268,8 +1485,8 @@ AWS コンソールで以下を確認。
 | `InvalidKeyPair.NotFound` | キーペア名が間違い / 別リージョン | コンソールで `ap-northeast-1` を確認 |
 | `UnauthorizedOperation` | IAM 権限不足 | 必要なポリシー(EC2/VPC/ELB)が付いているか |
 | `iam:ListUsers` の AccessDenied | IAM ユーザーに IAM 操作権限がない | MFA 設定などはルートユーザーから行う(3.1.4 参照) |
-| SSH がタイムアウト | SG の許可 IP が現在と異なる | `allowed_ssh_cidr` を更新して再 apply |
-| ALB の URL でつながらない | TG のヘルスチェック失敗 | EC2 で `nginx` が起動しているか、SG で VPC 内 80 を許可しているか |
+| SSH がタイムアウト | SG の許可 IP が現在と異なる | `common_ssh_cidr` を更新して再 apply |
+| ALB の URL でつながらない | TG のヘルスチェック失敗 | EC2 で Web サーバ(nginx 等)を手動でインストール・起動したか、SG で VPC 内 80 を許可しているか |
 | ALB 作成時に `subnets` エラー | サブネットが 1 AZ のみ | ALB は最低 2 AZ 必要。`public_subnet_cidrs` を 2 件に |
 | NAT 経由でも通信できない | private RT に NAT route がない | `nat module` の `aws_route` が作られたか確認 |
 | `terraform plan` で差分が出続ける | 手動変更 | 手動変更を戻す or コードに反映 |

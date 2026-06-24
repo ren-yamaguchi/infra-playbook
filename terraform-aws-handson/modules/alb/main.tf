@@ -1,3 +1,4 @@
+# Security Group for ALB
 resource "aws_security_group" "alb" {
   name        = "${var.name_prefix}-alb-sg"
   description = "Security group for ALB"
@@ -21,6 +22,7 @@ resource "aws_security_group" "alb" {
   tags = { Name = "${var.name_prefix}-alb-sg" }
 }
 
+# ALB
 resource "aws_lb" "this" {
   name               = "${var.name_prefix}-alb"
   load_balancer_type = "application"
@@ -30,6 +32,7 @@ resource "aws_lb" "this" {
   tags = { Name = "${var.name_prefix}-alb" }
 }
 
+# Target Group
 resource "aws_lb_target_group" "this" {
   name     = "${var.name_prefix}-tg"
   port     = 80
@@ -48,6 +51,7 @@ resource "aws_lb_target_group" "this" {
   tags = { Name = "${var.name_prefix}-tg" }
 }
 
+# Listener(HTTP)
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.this.arn
   port              = 80
@@ -59,6 +63,7 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+# Attach EC2 instances to Target Group
 resource "aws_lb_target_group_attachment" "this" {
   count = length(var.target_instance_ids)
 

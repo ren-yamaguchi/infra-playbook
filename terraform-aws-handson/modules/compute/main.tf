@@ -1,3 +1,4 @@
+# Latest Amazon Linux 2023 AMI
 data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
@@ -8,56 +9,17 @@ data "aws_ami" "al2023" {
   }
 }
 
-resource "aws_security_group" "ec2" {
-  name        = "${var.name_prefix}-ec2-sg"
-  description = "Security group for EC2"
-  vpc_id      = var.vpc_id
-
-  dynamic "ingress" {
-    for_each = var.allowed_ssh_cidr != "" ? [1] : []
-    content {
-      description = "SSH"
-      from_port   = 22
-      to_port     = 22
-      protocol    = "tcp"
-      cidr_blocks = [var.allowed_ssh_cidr]
-    }
-  }
-
-  ingress {
-    description = "HTTP from VPC"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.name_prefix}-ec2-sg" }
-}
-
 resource "aws_instance" "this" {
-  count = var.instance_count
+  for_each = var.instances
 
   ami                         = data.aws_ami.al2023.id
-  instance_type               = var.instance_type
+  instance_type               = each.value.instance_type
   key_name                    = var.key_pair_name
-  subnet_id                   = var.subnet_ids[count.index % length(var.subnet_ids)]
-  vpc_security_group_ids      = [aws_security_group.ec2.id]
-  associate_public_ip_address = var.associate_public_ip
+  subnet_id                   = var.subnet_ids[each.value.subnet_name]
+  vpc_security_group_ids      = [for name in each.value.security_group_ids : var.security_group_ids[name]]
+  associate_public_ip_address = each.value.associate_public_ip
 
-  user_data = <<-USERDATA
-              #!/bin/bash
-              dnf install -y nginx
-              echo "Hello from $(hostname)" > /usr/share/nginx/html/index.html
-              systemctl enable --now nginx
-              USERDATA
+  # No user_data: ship as a clean Amazon Linux 2023 instance for MW verification.
 
-  tags = { Name = "${var.name_prefix}-ec2-${format("%02d", count.index + 1)}" }
+  tags = { Name = "${var.name_prefix}-${each.key}" }
 }
