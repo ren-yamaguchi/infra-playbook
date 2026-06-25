@@ -1,24 +1,13 @@
 # Amazon Linux 2023 AMI from EC2 describe-images.
-# owners is set to the official Amazon Linux account ID (137112412989) for safety.
-data "aws_ami" "al2023" {
-  most_recent = true
-  owners      = ["137112412989"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-2023*-x86_64"]
-  }
-
-  filter {
-    name   = "is-public"
-    values = ["true"]
-  }
+data "aws_ssm_parameter" "al2023_ami" {
+  # Path pointing to the latest official Amazon Linux 2023 AMI
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
 resource "aws_instance" "this" {
   for_each = var.instances
 
-  ami                         = data.aws_ami.al2023.id
+  ami                         = data.aws_ssm_parameter.al2023_ami.insecure_value
   instance_type               = each.value.instance_type
   key_name                    = var.key_pair_name
   subnet_id                   = var.subnet_ids[each.value.subnet_name]
