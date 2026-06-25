@@ -780,7 +780,7 @@ output "alb_dns_name" {
 
 ### 5.7 `modules/network`
 
-#### variables.tf
+#### 5.7.1 `modules/network/variables.tf`
 
 ```hcl
 variable "name_prefix" { type = string }
@@ -803,7 +803,7 @@ variable "subnets" {
 }
 ```
 
-#### main.tf
+#### 5.7.2 `modules/network/main.tf`
 
 ```hcl
 locals {
@@ -880,7 +880,7 @@ resource "aws_route_table_association" "private" {
 > - サブネット名(map のキー)は自由に決められる(例: `public-a`, `web-a`, `data-c`)
 > - private 用 route table は network module が作り、**NAT への route は nat module が追加**する分離設計
 
-#### outputs.tf
+#### 5.7.3 `modules/network/outputs.tf`
 
 ```hcl
 output "vpc_id" { value = aws_vpc.this.id }
@@ -909,7 +909,7 @@ output "private_route_table_id" { value = aws_route_table.private.id }
 
 検証基盤として「複数SG × 複数ルール」を柔軟に定義できるようにします。`common` SG(SSH 22 のみ許可)は常に作成、それ以外の SG は `security_groups` 変数の map で受け取って動的に作成します。egress は全 SG で `0.0.0.0/0` 全許可をデフォルトで付与します。
 
-#### variables.tf
+#### 5.8.1 `modules/security/variables.tf`
 
 ```hcl
 variable "name_prefix" { type = string }
@@ -937,7 +937,7 @@ variable "security_groups" {
 }
 ```
 
-#### main.tf
+#### 5.8.2 `modules/security/main.tf`
 
 ```hcl
 # Common SG: SSH only (always created)
@@ -999,7 +999,7 @@ resource "aws_security_group" "extra" {
 }
 ```
 
-#### outputs.tf
+#### 5.8.3 `modules/security/outputs.tf`
 
 ```hcl
 # Map keyed by SG name: "common", plus each user-defined SG name.
@@ -1015,7 +1015,7 @@ output "security_group_ids" {
 
 ### 5.9 `modules/nat`
 
-#### variables.tf
+#### 5.9.1 `modules/nat/variables.tf`
 
 ```hcl
 variable "name_prefix" { type = string }
@@ -1023,7 +1023,7 @@ variable "public_subnet_id" { type = string }
 variable "private_route_table_id" { type = string }
 ```
 
-#### main.tf
+#### 5.9.2 `modules/nat/main.tf`
 
 ```hcl
 # EIP for NAT
@@ -1050,7 +1050,7 @@ resource "aws_route" "private_to_nat" {
 
 > **コスト注意**： NAT Gateway は **1 時間あたり約 $0.062 + データ転送料金**がかかります(東京)。学習が終わったら必ず `destroy` してください。
 
-#### outputs.tf
+#### 5.9.3 `modules/nat/outputs.tf`
 
 ```hcl
 output "nat_gateway_id" { value = aws_nat_gateway.this.id }
@@ -1064,7 +1064,7 @@ output "nat_gateway_id" { value = aws_nat_gateway.this.id }
 
 `user_data` は持ちません。インスタンスは素の Amazon Linux 2023 として起動します。
 
-#### variables.tf
+#### 5.10.1 `modules/compute/variables.tf`
 
 ```hcl
 variable "name_prefix" { type = string }
@@ -1091,7 +1091,7 @@ variable "security_group_ids" {
 }
 ```
 
-#### main.tf
+#### 5.10.2 `modules/compute/main.tf`
 
 ```hcl
 # Amazon Linux 2023 AMI from EC2 describe-images.
@@ -1115,7 +1115,7 @@ resource "aws_instance" "this" {
 > **AMI 取得方式について**: SSM Parameter Store の公式パラメータを参照することで、AWS マネジメントコンソールのクイックスタートに表示される **正規の Amazon Linux 2023 AMI** を確実に取得できます。`data "aws_ami"` でフィルタ検索する方式と違い、Marketplace の派生 AMI が混入する心配がありません。
 > ⚠️ この方式を使うには、IAM ユーザーに `AmazonSSMReadOnlyAccess`(または同等の `ssm:GetParameter` 権限)が必要です（今回のポリシー設定では許可済み）。
 
-#### outputs.tf
+#### 5.10.3 `modules/compute/outputs.tf`
 
 ```hcl
 # Maps keyed by server name (matches keys of var.instances)
@@ -1144,7 +1144,7 @@ output "ssh_commands" {
 
 ### 5.11 `modules/alb`
 
-#### variables.tf
+#### 5.11.1 `modules/alb/variables.tf`
 
 ```hcl
 variable "name_prefix" { type = string }
@@ -1158,7 +1158,7 @@ variable "allowed_cidr" {
 }
 ```
 
-#### main.tf
+#### 5.11.2 `modules/alb/main.tf`
 
 ```hcl
 # Security Group for ALB
@@ -1236,7 +1236,7 @@ resource "aws_lb_target_group_attachment" "this" {
 }
 ```
 
-#### outputs.tf
+#### 5.11.3 `modules/alb/outputs.tf`
 
 ```hcl
 output "dns_name" { value = aws_lb.this.dns_name }
@@ -1311,21 +1311,18 @@ resource "aws_instance" "this" {
 
 ---
 
-## 8. 実行手順(init → plan → apply)
+## 8. 実行手順
+
+**手順：** `terraform.tfvars`を編集
 
 ```bash
 cd terraform-aws-handson/envs/dev
-
-terraform init
-terraform fmt -recursive
-terraform validate
-terraform plan
-terraform apply   # yes
+vi terraform.tfvars
 ```
 
 ### 構成パターンの例
 
-#### パターン① web, ap, db の三層構造（EC2 がそれぞれ異なる）
+#### 同一サブネット内で異なる EC2 の web, ap, db 三層構造
 
 ```hcl
 project_name    = "handson"
@@ -1338,13 +1335,8 @@ common_ssh_cidr = "x.x.x.x/32"         # Replace with your global IP/32 (curl ht
 # Each tier has its own dedicated subnet.
 subnets = {
   "web-a"  = { cidr = "10.0.1.0/24",  az = "ap-northeast-1a", type = "public" }
-  "app-a"  = { cidr = "10.0.11.0/24", az = "ap-northeast-1a", type = "private" }
-  "data-a" = { cidr = "10.0.21.0/24", az = "ap-northeast-1a", type = "private" }
-
-  # The following are kept for redundancy expansion (optional). Remove if not needed.
-  "web-c"  = { cidr = "10.0.2.0/24",  az = "ap-northeast-1c", type = "public" }
-  "app-c"  = { cidr = "10.0.12.0/24", az = "ap-northeast-1c", type = "private" }
-  "data-c" = { cidr = "10.0.22.0/24", az = "ap-northeast-1c", type = "private" }
+  "app-a"  = { cidr = "10.0.11.0/24", az = "ap-northeast-1a", type = "public" }
+  "data-a" = { cidr = "10.0.21.0/24", az = "ap-northeast-1a", type = "public" }
 }
 
 # ===== Additional Security Groups =====
@@ -1405,29 +1397,35 @@ instances = {
     associate_public_ip = true
   }
   "ec2-ap" = {
-    instance_type       = "t3.small"
+    instance_type       = "t3.micro"
     subnet_name         = "app-a"
     security_group_ids  = ["common", "ap"]
-    associate_public_ip = false
+    associate_public_ip = true
   }
   "ec2-db" = {
-    instance_type       = "t3.small"
+    instance_type       = "t3.micro"
     subnet_name         = "data-a"
     security_group_ids  = ["common", "db"]
-    associate_public_ip = false
+    associate_public_ip = true
   }
 }
 
 # ===== Feature toggles =====
 # NAT is required because AP and DB are in private subnets and need outbound internet
 # (e.g. dnf install for installing Apache, php-fpm, MariaDB, etc.).
-enable_nat = true
+enable_nat = false
 enable_alb = false
 ```
 
-> パターン② のように一部 EC2 を private に置くと、その EC2 は SSH 接続のためには踏み台 or SSM Session Manager が別途必要です(common SG の SSH ingress は CIDR 制限がかかるため、踏み台SGを定義して紐づける運用が一般的)。
-
 > `instances = {}` にすれば EC2 は1台も作成されません。検証で「VPC とSGだけ事前に作っておきたい」というユースケースにも使えます。
+
+```bash
+terraform init            # 初期化
+terraform fmt -recursive  # 自動整形
+terraform validate        # 構文チェック
+terraform plan            # 計画提示
+terraform apply   # yes   # 実行
+```
 
 ---
 
@@ -1665,3 +1663,4 @@ resource "aws_route53_record" "app" {
 - [ ] `terraform destroy` を実行
 - [ ] AWS コンソールで EC2 / NAT / EIP / ALB / VPC が削除されたことを確認
 - [ ] 使い続けないアクセスキーは削除
+
