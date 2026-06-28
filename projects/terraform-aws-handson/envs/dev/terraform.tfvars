@@ -18,6 +18,10 @@ subnets = {
 # ===== Additional Security Groups (optional) =====
 # The "common" SG (SSH only) is created automatically; define additional SGs here.
 # Each EC2 references SGs by name in security_group_ids inside instances.
+#
+# Each ingress rule can specify either cidr_blocks (IP-based) or
+# source_security_groups (SG-based), or both. SG names defined in this block
+# can be referenced, including "common" and self-reference.
 security_groups = {
   # Example: Web tier (HTTP / HTTPS from my IP)
   # "web" = {
@@ -28,19 +32,27 @@ security_groups = {
   #   ]
   # }
 
-  # Example: AP tier (Tomcat from VPC)
+  # Example: AP tier (Tomcat from web SG only)
   # "ap" = {
   #   description = "AP tier"
   #   ingress_rules = [
-  #     { description = "Tomcat from VPC", from_port = 8080, to_port = 8080, protocol = "tcp", cidr_blocks = ["10.0.0.0/16"] }
+  #     { description = "Tomcat from web SG", from_port = 8080, to_port = 8080, protocol = "tcp", source_security_groups = ["web"] }
   #   ]
   # }
 
-  # Example: DB tier (PostgreSQL from VPC)
+  # Example: DB tier (PostgreSQL from ap SG only)
   # "db" = {
   #   description = "DB tier"
   #   ingress_rules = [
-  #     { description = "PostgreSQL from VPC", from_port = 5432, to_port = 5432, protocol = "tcp", cidr_blocks = ["10.0.0.0/16"] }
+  #     { description = "PostgreSQL from ap SG", from_port = 5432, to_port = 5432, protocol = "tcp", source_security_groups = ["ap"] }
+  #   ]
+  # }
+
+  # Example: Cluster (self-reference for inter-node communication)
+  # "cluster" = {
+  #   description = "Cluster node sync"
+  #   ingress_rules = [
+  #     { description = "Cluster sync", from_port = 7000, to_port = 7000, protocol = "tcp", source_security_groups = ["cluster"] }
   #   ]
   # }
 }

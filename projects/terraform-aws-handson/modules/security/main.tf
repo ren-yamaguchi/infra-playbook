@@ -26,7 +26,17 @@ resource "aws_security_group" "common" {
   tags = { Name = "${var.name_prefix}-common-sg" }
 }
 
-# Additional SGs (for_each map)
+# Map of all SG name -> SG ID (for SG-to-SG reference resolution).
+# Includes "common" plus all user-defined SGs (self-reference also supported).
+locals {
+  all_sg_ids = merge(
+    { "common" = aws_security_group.common.id },
+    { for k, sg in aws_security_group.extra : k => sg.id },
+  )
+}
+
+# Additional SGs (for_each map). Each ingress rule may use cidr_blocks or
+# source_security_groups (or both).
 resource "aws_security_group" "extra" {
   for_each = var.security_groups
 
@@ -41,7 +51,12 @@ resource "aws_security_group" "extra" {
       from_port   = ingress.value.from_port
       to_port     = ingress.value.to_port
       protocol    = ingress.value.protocol
-      cidr_blocks = ingress.value.cidr_blocks
+
+      # Use null when not specified so Terraform omits the attribute.
+      cidr_blocks = length(ingress.value.cidr_blocks) > 0 ? ingress.value.cidr_blocks : null
+      security_groups = length(ingress.value.source_security_groups) > 0 ? [
+        for n in ingress.value.source_security_groups : local.all_sg_ids[n]
+      ] : null
     }
   }
 
