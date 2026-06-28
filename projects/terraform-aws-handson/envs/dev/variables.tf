@@ -56,17 +56,20 @@ variable "common_ssh_cidr" {
 }
 
 # Additional SGs (optional). Each SG can have multiple ingress rules.
-# egress is implicitly 0.0.0.0/0 on all SGs.
+# Each ingress rule may use cidr_blocks (IP-based) or source_security_groups
+# (SG-based), or both. SG names defined here can be referenced from other SGs,
+# and "common" is also referencable. Self-reference is allowed.
 variable "security_groups" {
   description = "Map of additional security groups keyed by SG name"
   type = map(object({
     description = string
     ingress_rules = list(object({
-      description = string
-      from_port   = number
-      to_port     = number
-      protocol    = string
-      cidr_blocks = list(string)
+      description            = string
+      from_port              = number
+      to_port                = number
+      protocol               = string
+      cidr_blocks            = optional(list(string), [])
+      source_security_groups = optional(list(string), [])
     }))
   }))
   default = {}

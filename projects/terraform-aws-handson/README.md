@@ -537,17 +537,20 @@ variable "common_ssh_cidr" {
 }
 
 # Additional SGs (optional). Each SG can have multiple ingress rules.
-# egress is implicitly 0.0.0.0/0 on all SGs.
+# Each ingress rule may use cidr_blocks (IP-based) or source_security_groups
+# (SG-based), or both. SG names defined here can be referenced from other SGs,
+# and "common" is also referencable. Self-reference is allowed.
 variable "security_groups" {
   description = "Map of additional security groups keyed by SG name"
   type = map(object({
     description = string
     ingress_rules = list(object({
-      description = string
-      from_port   = number
-      to_port     = number
-      protocol    = string
-      cidr_blocks = list(string)
+      description            = string
+      from_port              = number
+      to_port                = number
+      protocol               = string
+      cidr_blocks            = optional(list(string), [])
+      source_security_groups = optional(list(string), [])
     }))
   }))
   default = {}
@@ -1533,6 +1536,7 @@ AWS コンソールで以下を確認。
 | `The given key does not identify an element` (subnet_ids) | `instances` の `subnet_name` が `subnets` に存在しない | `terraform.tfvars` の `subnets` に定義したキーと一致するか確認 |
 | `The given key does not identify an element` (all_sg_ids) | `source_security_groups` に存在しない SG 名を指定 | `terraform.tfvars` の `security_groups` に定義した SG 名(または "common")と一致するか確認 |
 | `Cycle: ...security_group.extra...` | SG 同士が双方向参照になっている | 一方向参照(web → app → db のような階層)に修正、または `aws_security_group_rule` でルールを分離 |
+| `attribute "cidr_blocks" is required` (security_groups) | `envs/dev/variables.tf` と `modules/security/variables.tf` で型定義が不一致(片方だけ optional に変えた) | **両方**の `cidr_blocks` と `source_security_groups` を `optional(list(string), [])` に揃える |
 | SSH がタイムアウト | SG の許可 IP が現在と異なる | `common_ssh_cidr` を更新して再 apply |
 | ALB の URL でつながらない | TG のヘルスチェック失敗 | EC2 で Web サーバ(nginx 等)を手動でインストール・起動したか、SG で VPC 内 80 を許可しているか |
 | ALB 作成時に `subnets` エラー | サブネットが 1 AZ のみ | ALB は最低 2 AZ 必要。`subnets` に異なる AZ のpublic サブネットを 2 つ以上定義 |
