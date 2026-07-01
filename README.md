@@ -30,7 +30,7 @@
 | ストレージ | NFS |
 | メール | Postfix, Dovecot |
 | 監視 | Zabbix 7.0 |
-| IaC / 自動化 | Ansible (Playbook / Role / Inventory), Docker / Docker Compose |
+| IaC / 自動化 | Ansible (Playbook / Role / Inventory), Terraform (AWS VPC / EC2 / ALB / SG), Docker / Docker Compose |
 | Linux | 権限設計 (SUID / SGID / Sticky), systemd, シェルスクリプト, cron |
 
 詳細は [`docs/skills.md`](docs/skills.md) を参照。
@@ -53,7 +53,7 @@
 
 - **`projects/`**: 複数の技術を組み合わせて構築した成果物単位の記録。1つの構築テーマに対して構成図・手順書・設定ファイルをまとめて配置しています。
 - **`topics/`**: 単一の技術カテゴリに紐づく手順・ナレッジ。同じ技術で「単体構築 → 多段構成 → 応用」と段階的に積み上げる構成です。技術の応用例(例: `https-letsencrypt`)もこの中に含めています。
-- **`multi-cloud/`**: AWS 以外のクラウドサービスでの構築記録を配置する予定の場所。現状は枠のみで、Azure / GCP のディレクトリを順次追加していきます。
+- **`multi-cloud/`**: AWS 以外のクラウドサービスでの構築記録を配置する予定の場所。現状は枠のみで、Azure / GCP のディレクトリを順次追加します。
 - **`docs/`**: 手順書ではないメタ情報の置き場。スキルマップの詳細、復習・発展課題、調査メモなどを配置します。
 
 ---
@@ -63,6 +63,7 @@
 | 領域 | 内容 |
 |------|------|
 | 他クラウド | Azure / GCP での基本構成・AWS との対応関係 |
+| IaC | Terraform の発展(Remote State, CI/CD 連携) |
 
 ---
 
